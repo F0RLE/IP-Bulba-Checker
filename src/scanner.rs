@@ -153,6 +153,11 @@ pub async fn run_scan(
     let proxies = Arc::new(proxies);
     let matcher = Arc::new(signatures::BlockMatcher::new(signatures_file.as_deref())?);
     let proxy_index = Arc::new(AtomicUsize::new(0));
+    let proxy_fails = Arc::new(
+        (0..proxies.len())
+            .map(|_| AtomicUsize::new(0))
+            .collect::<Vec<_>>(),
+    );
 
     let (work_tx, work_rx) = async_channel::bounded::<String>(queue_cap);
     let (logger_tx, mut logger_rx) = mpsc::channel::<ScanResult>(queue_cap);
@@ -292,6 +297,7 @@ pub async fn run_scan(
         let work_rx = work_rx.clone();
         let proxies = proxies.clone();
         let proxy_index = proxy_index.clone();
+        let proxy_fails = proxy_fails.clone();
         let ct = cancel_token.clone();
         let worker_scan_policy = scan_policy;
         let active = active_concurrency.clone();
@@ -308,11 +314,17 @@ pub async fn run_scan(
                     work = work_rx.recv(), if worker_id < active.load(Ordering::Relaxed) => {
                         match work {
                             Ok(domain) => {
-                                let proxy = if proxies.is_empty() {
-                                    None
+                                let (proxy_idx, proxy) = if proxies.is_empty() {
+                                    (None, None)
                                 } else {
-                                    let idx = proxy_index.fetch_add(1, Ordering::Relaxed) % proxies.len();
-                                    Some(proxies[idx].clone())
+                                    let mut idx = proxy_index.fetch_add(1, Ordering::Relaxed) % proxies.len();
+                                    for _ in 0..proxies.len() {
+                                        if proxy_fails[idx].load(Ordering::Relaxed) < 5 {
+                                            break;
+                                        }
+                                        idx = proxy_index.fetch_add(1, Ordering::Relaxed) % proxies.len();
+                                    }
+                                    (Some(idx), Some(proxies[idx].clone()))
                                 };
 
                                 let scan_fut = scan_domain(
@@ -354,6 +366,15 @@ pub async fn run_scan(
                                         },
                                     ),
                                 };
+
+                                if let Some(idx) = proxy_idx {
+                                    if matches!(res.verdict, Verdict::Unreachable | Verdict::TlsFailure | Verdict::NetworkBlocked) {
+                                        proxy_fails[idx].fetch_add(1, Ordering::Relaxed);
+                                    } else {
+                                        proxy_fails[idx].store(0, Ordering::Relaxed);
+                                    }
+                                }
+
                                 if logger_tx.send(res).await.is_err() { break; }
                             }
                             Err(_) => break,
@@ -533,58 +554,46 @@ fn pick_preferred_result(initial: ScanResult, retry: ScanResult) -> ScanResult {
     if retry_wins { retry } else { initial }
 }
 
+/// Read up to `max_body_size` bytes from any response type that exposes
+/// `async fn chunk(&mut self) -> Result<Option<Bytes>>`. Using a macro
+/// avoids duplicating identical logic across `wreq::Response` and
+/// `reqwest::Response` which share the same API but have no common trait.
+macro_rules! read_body_limited {
+    ($response:expr, $max_body_size:expr) => {{
+        let max = $max_body_size;
+        let mut body = Vec::with_capacity(max.min(65_536));
+        loop {
+            match $response.chunk().await {
+                Ok(Some(chunk)) => {
+                    let remaining = max.saturating_sub(body.len());
+                    if remaining == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                    if body.len() >= max {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => return Err(err.into()),
+            }
+        }
+        anyhow::Ok(body)
+    }};
+}
+
 async fn read_wreq_body_limited(
     response: &mut wreq::Response,
     max_body_size: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut body = Vec::with_capacity(max_body_size.min(65_536));
-
-    loop {
-        match response.chunk().await {
-            Ok(Some(chunk)) => {
-                let remaining = max_body_size.saturating_sub(body.len());
-                if remaining == 0 {
-                    break;
-                }
-
-                body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-                if body.len() >= max_body_size {
-                    break;
-                }
-            }
-            Ok(None) => break,
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    Ok(body)
+    read_body_limited!(response, max_body_size)
 }
 
 async fn read_reqwest_body_limited(
     response: &mut reqwest::Response,
     max_body_size: usize,
 ) -> anyhow::Result<Vec<u8>> {
-    let mut body = Vec::with_capacity(max_body_size.min(65_536));
-
-    loop {
-        match response.chunk().await {
-            Ok(Some(chunk)) => {
-                let remaining = max_body_size.saturating_sub(body.len());
-                if remaining == 0 {
-                    break;
-                }
-
-                body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-                if body.len() >= max_body_size {
-                    break;
-                }
-            }
-            Ok(None) => break,
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    Ok(body)
+    read_body_limited!(response, max_body_size)
 }
 
 fn probe_paths_for_domain(domain: &str) -> Vec<String> {
@@ -764,10 +773,27 @@ async fn scan_domain(
 
     if should_try_retest(&attempts[0], scan_policy) {
         for attempt_idx in 0..scan_policy.retest_attempts {
-            tokio::time::sleep(Duration::from_millis(
-                scan_policy.retest_backoff_ms * (attempt_idx as u64 + 1),
-            ))
-            .await;
+            // For 429 RateLimited: honour Retry-After header (clamped 1-30 s)
+            // then add exponential backoff. For all other verdicts use the
+            // profile's flat backoff multiplied by attempt index.
+            let backoff_ms = if attempts[0].verdict == Verdict::RateLimited {
+                let retry_after_secs: u64 = attempts[0]
+                    .reason
+                    .split('|')
+                    .find_map(|part| {
+                        let p = part.trim();
+                        p.strip_prefix("retry-after=")
+                            .and_then(|s| s.parse::<u64>().ok())
+                    })
+                    .unwrap_or(0);
+                // clamp header value to [1, 30] seconds, then add jitter
+                let base_secs = retry_after_secs.clamp(1, 30);
+                let jitter_ms = fastrand::u64(0..500);
+                base_secs * 1_000 + jitter_ms
+            } else {
+                scan_policy.retest_backoff_ms * (attempt_idx as u64 + 1)
+            };
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
 
             let retry = scan_domain_once(
                 client,
@@ -805,7 +831,7 @@ async fn check_domain(
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
     timeout_secs: u64,
-    max_redirects: usize,
+    _max_redirects: usize,
     max_body_size: usize,
     verbose: bool,
 ) -> anyhow::Result<ScanResult> {
@@ -930,15 +956,7 @@ async fn check_domain(
             let kind = classify_transport_error(&reason);
 
             if kind == TransportErrorKind::Unreachable {
-                let fallback_response = send_via_reqwest(
-                    fallback_client,
-                    &url,
-                    proxy.map(String::as_str),
-                    ua,
-                    timeout_secs,
-                    max_redirects,
-                )
-                .await;
+                let fallback_response = send_via_reqwest(fallback_client, &url, ua).await;
 
                 if let Ok(mut response) = fallback_response {
                     let status = response.status();

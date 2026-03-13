@@ -139,6 +139,7 @@ pub struct ComparisonResult {
     pub service_role: Option<String>,
     pub local_verdict: Verdict,
     pub local_routing_decision: RoutingDecision,
+    pub local_confidence: u8,
     pub local_evidence: EvidenceBundle,
     pub control_verdict: Verdict,
     pub control_routing_decision: RoutingDecision,

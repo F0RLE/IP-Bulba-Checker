@@ -1,6 +1,6 @@
 [package]
 name        = "bulbascan"
-version     = "0.1.1"
+version     = "0.1.2"
 edition     = "2024"
 rust-version = "1.94"
 description  = "High-speed selective-proxy scanner for geo-block detection and geosite routing list generation"

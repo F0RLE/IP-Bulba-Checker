@@ -101,7 +101,7 @@ pub(crate) fn apply_profile_confidence_adjustment(
 }
 
 pub(crate) fn is_block_status(code: u16) -> bool {
-    matches!(code, 403 | 418 | 429 | 451)
+    matches!(code, 400 | 401 | 403 | 404 | 405 | 418 | 429 | 451)
 }
 
 pub(crate) fn verdict_from_block_type(block_type: signatures::BlockType) -> Verdict {
@@ -136,17 +136,18 @@ pub(crate) fn classify_status_code(code: u16) -> Option<Evidence> {
     }
 
     let (verdict, block_type, confidence) = match code {
-        451 => (Verdict::GeoBlocked, signatures::BlockType::Geo, 95),
-        429 => (Verdict::RateLimited, signatures::BlockType::Limit, 90),
-        418 => (Verdict::WafBlocked, signatures::BlockType::Waf, 70),
-        403 => (Verdict::WafBlocked, signatures::BlockType::Waf, 72),
+        451 => (Verdict::GeoBlocked, Some(signatures::BlockType::Geo), 95),
+        429 => (Verdict::RateLimited, Some(signatures::BlockType::Limit), 90),
+        418 => (Verdict::WafBlocked, Some(signatures::BlockType::Waf), 70),
+        403 => (Verdict::WafBlocked, Some(signatures::BlockType::Waf), 72),
+        400 | 401 | 404 | 405 => (Verdict::UnexpectedStatus, None, 60),
         _ => return None,
     };
 
     Some(Evidence {
         verdict,
         reason: format!("HTTP {code}"),
-        block_type: Some(block_type),
+        block_type,
         confidence,
     })
 }
@@ -226,6 +227,19 @@ pub(crate) fn classify_redirect(url: &str) -> Option<Evidence> {
         block_type: Some(block_type),
         confidence,
     })
+}
+
+/// Check a redirect chain for any blocking patterns.
+/// Returns the first match found in the chain (from first to last redirect).
+/// Intermediate redirects may contain block signals before the final URL.
+#[allow(dead_code)]
+pub(crate) fn classify_redirect_chain(redirects: &[String]) -> Option<Evidence> {
+    for url in redirects {
+        if let Some(ev) = classify_redirect(url) {
+            return Some(ev);
+        }
+    }
+    None
 }
 
 pub(crate) fn make_signal(
@@ -413,9 +427,44 @@ pub(crate) fn analyze_http_observation(
     // ── Quick Win #2 & #3: Body scan gating ──────────────────────
     // Skip body signature scan when:
     // - HTTP 429 (rate-limit page often contains WAF-like patterns)
-    // - 200 OK with body > 32KB (legitimate content, not a block page)
-    let skip_body_scan =
-        status_code == 429 || ((200..300).contains(&status_code) && body_raw.len() > 32_768);
+    // - 200 OK with body size dynamically checked against Content-Type
+    let is_binary = headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-type") && {
+            let lower = v.to_ascii_lowercase();
+            // Skip 100% of large binaries
+            lower.contains("image/")
+                || lower.contains("video/")
+                || lower.contains("audio/")
+                || lower.contains("application/octet-stream")
+                || lower.contains("application/zip")
+                || lower.contains("application/pdf")
+                || lower.contains("font/")
+        }
+    });
+
+    let is_text = headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-type") && {
+            let lower = v.to_ascii_lowercase();
+            // Scan text up to 100KB if the profile specifically expects large WAF pages
+            lower.contains("text/")
+                || lower.contains("application/json")
+                || lower.contains("application/xml")
+        }
+    });
+
+    let skip_body_scan = if status_code == 429 {
+        true
+    } else if (200..300).contains(&status_code) {
+        if is_binary {
+            true
+        } else if is_text {
+            body_raw.len() > 102_400
+        } else {
+            body_raw.len() > 32_768
+        }
+    } else {
+        false
+    };
 
     if !skip_body_scan {
         if let Some((sig, btype)) = matcher.find_api_text(&body_text) {
@@ -424,7 +473,7 @@ pub(crate) fn analyze_http_observation(
             signals.push(signal);
         }
         if let Some((sig, btype)) = matcher.find_body_text(&body_text) {
-            let confidence = match btype {
+            let mut confidence: u8 = match btype {
                 signatures::BlockType::Captcha => 92,
                 signatures::BlockType::Geo => 93,
                 signatures::BlockType::Waf => 88,
@@ -433,6 +482,15 @@ pub(crate) fn analyze_http_observation(
                 signatures::BlockType::Dead => 80,
                 signatures::BlockType::Unknown => 65,
             };
+
+            // ── DOM-Aware Scoring ─────────────────────────────────
+            // Boost confidence if the signature appears in the <title>
+            if let Some(t) = &title
+                && t.to_lowercase().contains(&sig.to_lowercase())
+            {
+                confidence = confidence.saturating_add(5).min(98);
+            }
+
             let signal = make_signal("Match", &sig, btype, confidence);
             choose_better_signal(&mut best_signal, signal.clone());
             signals.push(signal);
@@ -440,7 +498,15 @@ pub(crate) fn analyze_http_observation(
     }
 
     if let Some(mut signal) = classify_status_code(status_code) {
-        signal.reason = format!("HTTP {status_code} {status_label}");
+        let mut reason = format!("HTTP {status_code} {status_label}");
+        if status_code == 429
+            && let Some((_, val)) = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
+        {
+            reason = format!("{reason} | retry-after={val}");
+        }
+        signal.reason = reason;
         choose_better_signal(&mut best_signal, signal.clone());
         signals.push(signal);
     }
@@ -773,7 +839,7 @@ pub(crate) fn classify_browser_html(
     if let Some((sig, btype)) = matcher.find_body_text(html) {
         if btype == signatures::BlockType::Geo
             && !title.is_empty()
-            && !browser_title_supports_geo(&title_lower)
+            && !crate::service_profiles::title_supports_geo(&title_lower)
         {
             return None;
         }
@@ -811,25 +877,6 @@ pub(crate) fn classify_browser_html(
 
     None
 }
-
-fn browser_title_supports_geo(title_lower: &str) -> bool {
-    [
-        "region",
-        "country",
-        "unavailable",
-        "not available",
-        "not supported",
-        "restricted",
-        "blocked",
-        "недоступ",
-        "не поддерж",
-        "регион",
-        "стране",
-    ]
-    .iter()
-    .any(|needle| title_lower.contains(needle))
-}
-
 #[cfg(test)]
 mod infra_tests {
     use super::{

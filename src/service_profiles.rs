@@ -17,7 +17,15 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct TomlConfig {
+    #[serde(default)]
+    geo_markers: Option<TomlGeoMarkers>,
     services: Vec<TomlProfile>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+struct TomlGeoMarkers {
+    #[serde(default)]
+    title_keywords: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -67,9 +75,14 @@ pub(crate) struct ServiceMatch {
 /// Compiled-in TOML fallback — always present at compile time.
 static BUILTIN_PROFILES: &str = include_str!("../profiles.toml");
 
-static REGISTRY: OnceLock<Vec<ProfileEntry>> = OnceLock::new();
+struct ProfileRegistry {
+    services: Vec<ProfileEntry>,
+    geo_title_keywords: Vec<String>,
+}
 
-fn load_registry() -> Vec<ProfileEntry> {
+static REGISTRY: OnceLock<ProfileRegistry> = OnceLock::new();
+
+fn load_registry() -> ProfileRegistry {
     // Try to load from disk — allows updating profiles without recompiling
     if let Some(exe_dir) = std::env::current_exe()
         .ok()
@@ -90,8 +103,8 @@ fn load_registry() -> Vec<ProfileEntry> {
     build_registry(config)
 }
 
-fn build_registry(config: TomlConfig) -> Vec<ProfileEntry> {
-    config
+fn build_registry(config: TomlConfig) -> ProfileRegistry {
+    let services = config
         .services
         .into_iter()
         .map(|p| ProfileEntry {
@@ -109,10 +122,33 @@ fn build_registry(config: TomlConfig) -> Vec<ProfileEntry> {
                 })
                 .collect(),
         })
-        .collect()
+        .collect();
+
+    let default_geo = vec![
+        "region".into(),
+        "country".into(),
+        "unavailable".into(),
+        "not available".into(),
+        "not supported".into(),
+        "restricted".into(),
+        "blocked".into(),
+        "недоступ".into(),
+        "не поддерж".into(),
+        "регион".into(),
+        "стране".into(),
+    ];
+
+    ProfileRegistry {
+        services,
+        geo_title_keywords: config
+            .geo_markers
+            .map(|gm| gm.title_keywords)
+            .filter(|v| !v.is_empty())
+            .unwrap_or(default_geo),
+    }
 }
 
-fn registry() -> &'static Vec<ProfileEntry> {
+fn registry() -> &'static ProfileRegistry {
     REGISTRY.get_or_init(load_registry)
 }
 
@@ -151,11 +187,12 @@ const DEFAULT_PROBE_PATHS: &[&str] = &["/"];
 const DEFAULT_CRITICAL_ROLES: &[&str] = &["web", "auth", "console", "storefront", "player", "app"];
 
 /// Find the best-matching service profile for a given target (URL or hostname).
-pub(crate) fn match_target(target: &str) -> Option<ServiceMatch> {
-    let host = normalize_host(target)?.to_ascii_lowercase();
+pub(crate) fn match_target(domain: &str) -> Option<ServiceMatch> {
+    let reg = REGISTRY.get_or_init(load_registry);
+    let host = normalize_host(domain)?.to_ascii_lowercase();
     let mut best: Option<(usize, ServiceMatch)> = None;
 
-    for profile in registry() {
+    for profile in &reg.services {
         for host_entry in &profile.hosts {
             if host_matches(&host, &host_entry.domain) {
                 let candidate = ServiceMatch {
@@ -192,13 +229,14 @@ pub(crate) fn probe_paths(target: &str) -> Vec<String> {
 }
 
 /// Return true if browser verification should be attempted for this target.
-pub(crate) fn should_use_browser_verification(target: &str) -> bool {
-    match_target(target).is_some_and(|m| m.browser_verification)
+pub(crate) fn should_use_browser_verification(domain: &str) -> bool {
+    match_target(domain).is_some_and(|m| m.browser_verification)
 }
 
 /// Return the expected roles for a named service (empty if unknown).
 pub(crate) fn expected_roles_for_service(service_name: &str) -> Vec<String> {
     registry()
+        .services
         .iter()
         .find(|p| p.name == service_name)
         .map(|p| p.expected_roles.clone())
@@ -208,10 +246,18 @@ pub(crate) fn expected_roles_for_service(service_name: &str) -> Vec<String> {
 /// Return the critical roles for a named service. Returns empty for unknown services.
 pub(crate) fn critical_roles_for_service(service_name: &str) -> Vec<String> {
     registry()
+        .services
         .iter()
         .find(|p| p.name == service_name)
         .map(|p| p.critical_roles.clone())
         .unwrap_or_default()
+}
+
+pub(crate) fn title_supports_geo(title_lower: &str) -> bool {
+    registry()
+        .geo_title_keywords
+        .iter()
+        .any(|needle| title_lower.contains(needle))
 }
 
 /// Return true if `role` is a critical role for the given service.

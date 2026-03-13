@@ -81,6 +81,9 @@ pub struct LiveBar {
     output_display: String,
     /// Terminal width from the previous render tick.
     prev_cols: Arc<AtomicUsize>,
+    speed_last_time: Mutex<Instant>,
+    speed_last_pos: AtomicU64,
+    speed_value: AtomicU64,
 }
 
 impl LiveBar {
@@ -103,6 +106,9 @@ impl LiveBar {
             potato,
             output_display,
             prev_cols: Arc::new(AtomicUsize::new(0)),
+            speed_last_time: Mutex::new(Instant::now()),
+            speed_last_pos: AtomicU64::new(0),
+            speed_value: AtomicU64::new(0),
         })
     }
 
@@ -170,7 +176,20 @@ impl LiveBar {
         let s = elapsed.as_secs();
         let elapsed_str = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
 
-        let speed = pos / s.max(1);
+        let mut speed = self.speed_value.load(Ordering::Relaxed);
+        if let Ok(mut last_t) = self.speed_last_time.try_lock() {
+            let dt = last_t.elapsed().as_secs();
+            if dt >= 2 {
+                let last_p = self.speed_last_pos.swap(pos, Ordering::Relaxed);
+                speed = pos.saturating_sub(last_p) / dt;
+                self.speed_value.store(speed, Ordering::Relaxed);
+                *last_t = Instant::now();
+            }
+        }
+        if speed == 0 && s > 0 && s < 2 {
+            speed = pos / s; // Fallback to avg for first 2 seconds
+        }
+
         let pct = if self.total > 0 {
             pos * 100 / self.total
         } else {

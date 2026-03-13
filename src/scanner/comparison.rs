@@ -13,7 +13,7 @@ use super::types::{
 use crate::service_profiles;
 
 pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> ComparisonResult {
-    let decision = if local.routing_decision == RoutingDecision::ProxyRequired
+    let mut decision = if local.routing_decision == RoutingDecision::ProxyRequired
         && control.routing_decision == RoutingDecision::DirectOk
     {
         ComparisonDecision::ConfirmedProxyRequired
@@ -41,6 +41,24 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
 
     let network_notes =
         compare_network_evidence(&local.network_evidence, &control.network_evidence);
+
+    let mut local_verdict_confidence = local.confidence;
+    let mut local_routing_decision = local.routing_decision;
+
+    if decision == ComparisonDecision::CandidateProxyRequired {
+        let is_strong_network_block = (local.network_evidence.tcp_443.status != ProbeStatus::Ok
+            || local.network_evidence.tls_443.status != ProbeStatus::Ok)
+            && (local.network_evidence.dns.status != ProbeStatus::Ok
+                || local.network_evidence.path_dns.status != ProbeStatus::Ok)
+            && control.network_evidence.path_dns.status == ProbeStatus::Ok;
+
+        if is_strong_network_block {
+            local_verdict_confidence = local_verdict_confidence.max(92);
+            local_routing_decision = RoutingDecision::ProxyRequired;
+            // Upgrade the decision since we escalated the routing requirement
+            decision = ComparisonDecision::ConfirmedProxyRequired;
+        }
+    }
     let reason = match decision {
         ComparisonDecision::ConfirmedProxyRequired => format!(
             "local {} but control is direct_ok",
@@ -73,7 +91,8 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
         service: local.service.clone(),
         service_role: local.service_role.clone(),
         local_verdict: local.verdict,
-        local_routing_decision: local.routing_decision,
+        local_routing_decision,
+        local_confidence: local_verdict_confidence,
         local_evidence: local.evidence.clone(),
         control_verdict: control.verdict,
         control_routing_decision: control.routing_decision,
@@ -245,7 +264,13 @@ pub fn write_confirmed_proxy_required(
 ) -> anyhow::Result<()> {
     let mut domains = comparisons
         .iter()
-        .filter(|comparison| comparison.decision == ComparisonDecision::ConfirmedProxyRequired)
+        .filter(|comparison| {
+            matches!(
+                comparison.decision,
+                ComparisonDecision::ConfirmedProxyRequired
+                    | ComparisonDecision::CandidateProxyRequired
+            )
+        })
         .map(|comparison| comparison.domain.clone())
         .collect::<Vec<_>>();
     domains.sort();
