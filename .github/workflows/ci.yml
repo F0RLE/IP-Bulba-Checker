@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.94
+        components: rustfmt, clippy
+
+    # Moved Rustfmt before Cache as requested
+    - name: Rustfmt
+      run: cargo fmt --all -- --check
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+      
+    - name: Install NASM
+      uses: ilammy/setup-nasm@v1
+      
+    - name: Install LLVM & Dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib
+        
+    - name: Install LLVM (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        choco install llvm cmake -y
+        echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
+        
+    - name: Install LLVM (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install llvm cmake
+        echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+
+    - name: Check compilation
+      run: cargo check --verbose --all-targets --all-features
+
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Run tests
+      run: cargo test --verbose --workspace --all-features --locked

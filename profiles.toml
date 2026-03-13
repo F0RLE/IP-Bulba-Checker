@@ -1,0 +1,672 @@
+# Bulbascan Service Profiles
+#
+# Each [[services]] entry defines one logical service with its hostnames.
+# This file is loaded at startup from the directory containing the binary.
+# If the file is not found, a compiled-in copy is used as a fallback.
+#
+# Fields:
+#   name                  — display name used in reports
+#   browser_verification  — probe with a real browser if available
+#   expected_roles        — all host roles expected to be present
+#   critical_roles        — roles whose block triggers ProxyRequired
+#
+# Each [[services.hosts]] entry:
+#   domain                — hostname (matched as suffix of target)
+#   role                  — semantic role label (web/auth/api/assets/app/…)
+#   probe_paths           — URL paths to probe (in addition to /)
+
+# ─── AI Services ─────────────────────────────────────────────────────────────
+
+[[services]]
+name = "OpenAI"
+browser_verification = true
+expected_roles = ["web", "auth", "console", "api", "assets"]
+critical_roles  = ["web", "auth", "api"]
+
+[[services.hosts]]
+domain = "chat.openai.com"
+role   = "web"
+probe_paths = ["/", "/auth/login"]
+
+[[services.hosts]]
+domain = "chatgpt.com"
+role   = "web"
+probe_paths = ["/", "/auth/login"]
+
+[[services.hosts]]
+domain = "auth.openai.com"
+role   = "auth"
+probe_paths = ["/", "/u/login"]
+
+[[services.hosts]]
+domain = "platform.openai.com"
+role   = "console"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "api.openai.com"
+role   = "api"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "oaistatic.com"
+role   = "assets"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "oaiusercontent.com"
+role   = "assets"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Anthropic"
+browser_verification = true
+expected_roles = ["web", "console", "api"]
+critical_roles  = ["web", "console", "api"]
+
+[[services.hosts]]
+domain = "claude.ai"
+role   = "web"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "console.anthropic.com"
+role   = "console"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "api.anthropic.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Gemini"
+browser_verification = true
+expected_roles = ["app", "console"]
+critical_roles  = ["app", "console"]
+
+[[services.hosts]]
+domain = "gemini.google.com"
+role   = "app"
+probe_paths = ["/", "/app"]
+
+[[services.hosts]]
+domain = "aistudio.google.com"
+role   = "console"
+probe_paths = ["/", "/prompts/new_chat"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Perplexity"
+browser_verification = true
+expected_roles = ["web", "api"]
+critical_roles  = ["web"]
+
+[[services.hosts]]
+domain = "perplexity.ai"
+role   = "web"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.perplexity.ai"
+role   = "console"
+probe_paths = ["/", "/search"]
+
+[[services.hosts]]
+domain = "api.perplexity.ai"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Financial ────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Wise"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth", "api"]
+
+[[services.hosts]]
+domain = "wise.com"
+role   = "web"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "login.wise.com"
+role   = "auth"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "api.transferwise.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Freelance ────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Upwork"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "upwork.com"
+role   = "web"
+probe_paths = ["/", "/nx/signup"]
+
+[[services.hosts]]
+domain = "www.upwork.com"
+role   = "auth"
+probe_paths = ["/", "/ab/account-security/login"]
+
+[[services.hosts]]
+domain = "api.upwork.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Sport / Health ───────────────────────────────────────────────────────────
+
+[[services]]
+name = "Strava"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "strava.com"
+role   = "web"
+probe_paths = ["/", "/login", "/register/free"]
+
+[[services.hosts]]
+domain = "www.strava.com"
+role   = "auth"
+probe_paths = ["/", "/login", "/register/free"]
+
+[[services.hosts]]
+domain = "api.strava.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Streaming Video ──────────────────────────────────────────────────────────
+
+[[services]]
+name = "Max"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "max.com"
+role   = "storefront"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "www.max.com"
+role   = "playback"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "auth.max.com"
+role   = "auth"
+probe_paths = ["/", "/login"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Prime Video"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "primevideo.com"
+role   = "storefront"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "www.primevideo.com"
+role   = "playback"
+probe_paths = ["/", "/region/eu/detail"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Disney+"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "disneyplus.com"
+role   = "storefront"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "www.disneyplus.com"
+role   = "playback"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "auth.disneyplus.com"
+role   = "auth"
+probe_paths = ["/", "/login"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Hulu"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "hulu.com"
+role   = "storefront"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "www.hulu.com"
+role   = "playback"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "auth.hulu.com"
+role   = "auth"
+probe_paths = ["/", "/web/login"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Paramount+"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "paramountplus.com"
+role   = "storefront"
+probe_paths = ["/", "/welcome"]
+
+[[services.hosts]]
+domain = "www.paramountplus.com"
+role   = "playback"
+probe_paths = ["/", "/home"]
+
+[[services.hosts]]
+domain = "auth.paramountplus.com"
+role   = "auth"
+probe_paths = ["/", "/signin"]
+
+# ─── Music ────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Deezer"
+browser_verification = true
+expected_roles = ["web", "player", "api"]
+critical_roles  = ["web", "player"]
+
+[[services.hosts]]
+domain = "deezer.com"
+role   = "web"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.deezer.com"
+role   = "player"
+probe_paths = ["/", "/en/channels/explore"]
+
+[[services.hosts]]
+domain = "api.deezer.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Pandora"
+browser_verification = false
+expected_roles = ["web", "player", "api"]
+critical_roles  = ["web", "player"]
+
+[[services.hosts]]
+domain = "pandora.com"
+role   = "web"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.pandora.com"
+role   = "player"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "TIDAL"
+browser_verification = true
+expected_roles = ["web", "player", "api"]
+critical_roles  = ["web", "player"]
+
+[[services.hosts]]
+domain = "tidal.com"
+role   = "web"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "login.tidal.com"
+role   = "auth"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "listen.tidal.com"
+role   = "player"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "api.tidal.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Retail ───────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Target"
+browser_verification = true
+expected_roles = ["storefront", "auth", "api"]
+critical_roles  = ["storefront", "auth"]
+
+[[services.hosts]]
+domain = "target.com"
+role   = "storefront"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "login.target.com"
+role   = "auth"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Best Buy"
+browser_verification = true
+expected_roles = ["storefront", "auth", "api"]
+critical_roles  = ["storefront", "auth"]
+
+[[services.hosts]]
+domain = "bestbuy.com"
+role   = "storefront"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.bestbuy.com"
+role   = "auth"
+probe_paths = ["/", "/identity/global/signin"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Home Depot"
+browser_verification = true
+expected_roles = ["storefront", "auth", "api"]
+critical_roles  = ["storefront", "auth"]
+
+[[services.hosts]]
+domain = "homedepot.com"
+role   = "storefront"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.homedepot.com"
+role   = "auth"
+probe_paths = ["/", "/auth/view/signin"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Lowe's"
+browser_verification = true
+expected_roles = ["storefront", "auth", "api"]
+critical_roles  = ["storefront", "auth"]
+
+[[services.hosts]]
+domain = "lowes.com"
+role   = "storefront"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.lowes.com"
+role   = "auth"
+probe_paths = ["/", "/u/login"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Nordstrom"
+browser_verification = true
+expected_roles = ["storefront", "auth", "api"]
+critical_roles  = ["storefront", "auth"]
+
+[[services.hosts]]
+domain = "nordstrom.com"
+role   = "storefront"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "www.nordstrom.com"
+role   = "auth"
+probe_paths = ["/", "/signin"]
+
+# ─── Dev Tools ────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Docker"
+browser_verification = false
+expected_roles = ["web", "auth", "assets"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "docker.com"
+role   = "web"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "hub.docker.com"
+role   = "auth"
+probe_paths = ["/", "/login"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Slack"
+browser_verification = false
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth", "api"]
+
+[[services.hosts]]
+domain = "slack.com"
+role   = "web"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "app.slack.com"
+role   = "auth"
+probe_paths = ["/", "/client"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Sentry"
+browser_verification = false
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "sentry.io"
+role   = "web"
+probe_paths = ["/", "/auth/login/"]
+
+[[services.hosts]]
+domain = "app.sentry.io"
+role   = "auth"
+probe_paths = ["/", "/auth/login/"]
+
+[[services.hosts]]
+domain = "o0.ingest.sentry.io"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Social / Short Video ─────────────────────────────────────────────────────
+
+[[services]]
+name = "Meta"
+browser_verification = true
+expected_roles = ["web", "auth", "api", "assets", "app"]
+critical_roles  = ["web", "api"]
+
+[[services.hosts]]
+domain = "facebook.com"
+role   = "web"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "m.facebook.com"
+role   = "auth"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "instagram.com"
+role   = "web"
+probe_paths = ["/", "/accounts/login"]
+
+[[services.hosts]]
+domain = "cdninstagram.com"
+role   = "assets"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "fbcdn.net"
+role   = "assets"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "whatsapp.com"
+role   = "web"
+probe_paths = ["/", "/download", "/channel"]
+
+[[services.hosts]]
+domain = "whatsapp.net"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "TikTok"
+browser_verification = true
+expected_roles = ["web", "app", "api", "assets"]
+critical_roles  = ["web", "app"]
+
+[[services.hosts]]
+domain = "tiktok.com"
+role   = "web"
+probe_paths = ["/", "/explore"]
+
+[[services.hosts]]
+domain = "www.tiktok.com"
+role   = "app"
+probe_paths = ["/", "/explore"]
+
+[[services.hosts]]
+domain = "m.tiktok.com"
+role   = "web"
+probe_paths = ["/", "/explore"]
+
+[[services.hosts]]
+domain = "tiktokv.com"
+role   = "api"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "tiktokcdn.com"
+role   = "assets"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "tiktokcdn-us.com"
+role   = "assets"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "capcutapi.com"
+role   = "app"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "capcut.com"
+role   = "web"
+probe_paths = ["/", "/tools"]
+
+[[services.hosts]]
+domain = "www.capcut.com"
+role   = "app"
+probe_paths = ["/", "/tools"]
+
+# ─── Gaming ───────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "PlayStation"
+browser_verification = true
+expected_roles = ["web", "auth", "api", "assets"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "playstation.com"
+role   = "web"
+probe_paths = ["/", "/en-us/"]
+
+[[services.hosts]]
+domain = "store.playstation.com"
+role   = "storefront"
+probe_paths = ["/", "/en-us/latest"]
+
+[[services.hosts]]
+domain = "my.playstation.com"
+role   = "auth"
+probe_paths = ["/", "/profile"]
+
+[[services.hosts]]
+domain = "playstation.net"
+role   = "api"
+probe_paths = ["/"]
+
+# ─── Security ─────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Avast"
+browser_verification = true
+expected_roles = ["web", "auth", "api", "app"]
+critical_roles  = ["web", "api"]
+
+[[services.hosts]]
+domain = "avast.com"
+role   = "web"
+probe_paths = ["/", "/en-us/index"]
+
+[[services.hosts]]
+domain = "id.avast.com"
+role   = "auth"
+probe_paths = ["/", "/signin"]
+
+[[services.hosts]]
+domain = "api.avast.com"
+role   = "api"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "avsxappcaptiveportal.com"
+role   = "app"
+probe_paths = ["/"]
