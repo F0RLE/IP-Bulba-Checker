@@ -67,7 +67,7 @@ impl ScanPolicy {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
     Accessible,
@@ -82,7 +82,7 @@ pub enum Verdict {
     Unreachable,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingDecision {
     ProxyRequired,

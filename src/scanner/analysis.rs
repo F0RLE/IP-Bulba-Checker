@@ -1,3 +1,4 @@
+use crate::service_profiles;
 use crate::signatures;
 
 use super::TransportErrorKind;
@@ -16,11 +17,16 @@ const INFRA_DOMAIN_MARKERS: &[&str] = &[
     "appsflyersdk",
     "apple-dns",
     "aaplimg",
+    "azureedge",
+    "azurewebsites",
     "cdn",
     "cloudflare-dns",
     "cloudfront",
     "dns.google",
     "doubleclick",
+    "edgekey",
+    "edgesuite",
+    "fastly",
     "ggpht",
     "googleadservices",
     "googleapis",
@@ -65,6 +71,32 @@ const CONSUMER_DOMAIN_MARKERS: &[&str] = &[
     "whatsapp",
     "youtube",
 ];
+
+/// Adjust confidence based on the service profile match for the domain.
+///
+/// - Known service with `browser_verification = true` → +5 for geo/captcha verdicts.
+///   These services actively challenge non-target-region users, so our signal is reliable.
+/// - Unknown domain (no profile match) → −10 for WAF verdict.
+///   WAF signatures on unmapped domains are noisier; pull them toward `ManualReview` threshold.
+pub(crate) fn apply_profile_confidence_adjustment(
+    domain: &str,
+    mut result: ScanResult,
+) -> ScanResult {
+    match service_profiles::match_target(domain) {
+        Some(profile) if profile.browser_verification => {
+            if matches!(result.verdict, Verdict::GeoBlocked | Verdict::Captcha) {
+                result.confidence = result.confidence.saturating_add(5).min(99);
+            }
+        }
+        None => {
+            if result.verdict == Verdict::WafBlocked {
+                result.confidence = result.confidence.saturating_sub(10);
+            }
+        }
+        _ => {}
+    }
+    result
+}
 
 pub(crate) fn is_block_status(code: u16) -> bool {
     matches!(code, 403 | 418 | 429 | 451)
@@ -432,24 +464,27 @@ pub(crate) fn analyze_http_observation(
             || (non_success && status_supports_block && signal.confidence >= 70);
 
         if should_block {
-            return relax_infra_root_result(with_evidence(
-                build_scan_result(
-                    domain,
-                    status_from_verdict(signal.verdict),
-                    signal.verdict,
-                    signal.confidence,
-                    Some(status_code),
-                    signal.reason.clone(),
-                    signal.block_type,
-                ),
-                EvidenceBundle {
-                    source: Some("http".to_string()),
-                    path,
-                    final_url: Some(final_url.to_string()),
-                    title,
-                    signal: Some(signal.reason),
-                },
-            ));
+            return apply_profile_confidence_adjustment(
+                &domain.clone(),
+                relax_infra_root_result(with_evidence(
+                    build_scan_result(
+                        domain,
+                        status_from_verdict(signal.verdict),
+                        signal.verdict,
+                        signal.confidence,
+                        Some(status_code),
+                        signal.reason.clone(),
+                        signal.block_type,
+                    ),
+                    EvidenceBundle {
+                        source: Some("http".to_string()),
+                        path,
+                        final_url: Some(final_url.to_string()),
+                        title,
+                        signal: Some(signal.reason),
+                    },
+                )),
+            );
         }
     }
 
@@ -576,6 +611,38 @@ pub(crate) fn stabilize_scan_attempts(attempts: Vec<ScanResult>) -> ScanResult {
         return chosen;
     }
 
+    // ── Multi-probe consensus ───────────────────────────────────────────────
+    // For ambiguous results (confidence 60–85) require a majority vote (≥2/3)
+    // before accepting the winning verdict. Without a clear majority → ManualReview.
+    let n = attempts.len();
+    if n >= 3 {
+        // Count verdict+routing pairs
+        let mut counts: std::collections::HashMap<(Verdict, RoutingDecision), usize> =
+            std::collections::HashMap::new();
+        for a in &attempts {
+            *counts.entry((a.verdict, a.routing_decision)).or_default() += 1;
+        }
+        let majority_threshold = (n * 2).div_ceil(3);
+        if let Some(((majority_verdict, majority_routing), _)) =
+            counts.iter().find(|(_, cnt)| **cnt >= majority_threshold)
+        {
+            // Use .iter().cloned() so `attempts` is not moved and remains usable below.
+            if let Some(mut chosen) = attempts
+                .iter()
+                .filter(|a| {
+                    a.verdict == *majority_verdict && a.routing_decision == *majority_routing
+                })
+                .max_by_key(|a| verdict_rank(a))
+                .cloned()
+            {
+                chosen.confidence = chosen.confidence.saturating_add(3).min(99);
+                chosen.reason = format!("{} | retest=consensus", chosen.reason);
+                return chosen;
+            }
+        }
+    }
+
+    // No majority — fall back to ManualReview on the worst observed result
     let mut chosen = attempts
         .iter()
         .filter(|attempt| attempt.verdict != Verdict::Accessible)
@@ -763,8 +830,9 @@ fn browser_title_supports_geo(title_lower: &str) -> bool {
 #[cfg(test)]
 mod infra_tests {
     use super::{
-        analyze_http_observation, classify_browser_html, is_consumer_like_domain,
-        is_infra_like_domain, is_non_consumer_platform_domain, relax_infra_root_result,
+        analyze_http_observation, apply_profile_confidence_adjustment, classify_browser_html,
+        is_consumer_like_domain, is_infra_like_domain, is_non_consumer_platform_domain,
+        relax_infra_root_result, stabilize_scan_attempts,
     };
     use crate::scanner::types::build_scan_result;
     use crate::scanner::{DomainStatus, EvidenceBundle, RoutingDecision, Verdict, with_evidence};
@@ -861,5 +929,121 @@ mod infra_tests {
             "<html><title>Интересное — Ищите и смотрите свои любимые видео в TikTok</title><body>не поддерживается в вашем регионе</body></html>",
         );
         assert!(ambiguous.is_none());
+    }
+
+    #[test]
+    fn detects_new_infra_markers_fastly_edgekey_azure() {
+        assert!(is_infra_like_domain("global.prod.fastly.net"));
+        assert!(is_infra_like_domain("e12345.x.edgekey.net"));
+        assert!(is_infra_like_domain("myapp.azurewebsites.net"));
+        assert!(is_infra_like_domain("assets.azureedge.net"));
+        assert!(is_infra_like_domain("e4321.g.edgesuite.net"));
+        // Consumer domains must not be mistakenly infra-classified
+        assert!(!is_infra_like_domain("netflix.com"));
+        assert!(!is_infra_like_domain("chatgpt.com"));
+    }
+
+    #[test]
+    fn profile_confidence_adjustment_boosts_geo_for_browser_verification_services() {
+        use crate::scanner::types::{DomainStatus, build_scan_result};
+
+        // OpenAI has browser_verification = true — geo confidence should increase
+        let result = build_scan_result(
+            "chat.openai.com".to_string(),
+            DomainStatus::Blocked,
+            Verdict::GeoBlocked,
+            88,
+            Some(403),
+            "HTTP 403".to_string(),
+            Some(crate::signatures::BlockType::Geo),
+        );
+        let adjusted = apply_profile_confidence_adjustment("chat.openai.com", result);
+        assert_eq!(
+            adjusted.confidence, 93,
+            "geo confidence for browser_verification service should be +5"
+        );
+
+        // Unknown domain WAF confidence should decrease
+        let waf_result = build_scan_result(
+            "unknown-random-site.example".to_string(),
+            DomainStatus::Blocked,
+            Verdict::WafBlocked,
+            84,
+            Some(403),
+            "HTTP 403".to_string(),
+            Some(crate::signatures::BlockType::Waf),
+        );
+        let adjusted_waf =
+            apply_profile_confidence_adjustment("unknown-random-site.example", waf_result);
+        assert_eq!(
+            adjusted_waf.confidence, 74,
+            "WAF confidence for unknown domain should be -10"
+        );
+    }
+
+    #[test]
+    fn multi_probe_consensus_accepts_majority_verdict() {
+        use crate::scanner::types::{DomainStatus, build_scan_result};
+
+        let make = |v: Verdict, r: RoutingDecision, conf: u8| {
+            let mut res = build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                v,
+                conf,
+                Some(403),
+                "test".to_string(),
+                None,
+            );
+            res.routing_decision = r;
+            res
+        };
+
+        // 2 of 3 agree on GeoBlocked/ProxyRequired → consensus
+        let attempts = vec![
+            make(Verdict::GeoBlocked, RoutingDecision::ProxyRequired, 78),
+            make(Verdict::GeoBlocked, RoutingDecision::ProxyRequired, 75),
+            make(Verdict::WafBlocked, RoutingDecision::ManualReview, 65),
+        ];
+        let result = stabilize_scan_attempts(attempts);
+        assert_eq!(result.verdict, Verdict::GeoBlocked);
+        assert_eq!(result.routing_decision, RoutingDecision::ProxyRequired);
+        assert!(
+            result.reason.contains("consensus"),
+            "should be consensus, got: {}",
+            result.reason
+        );
+        assert_eq!(result.confidence, 81, "78 + 3 consensus boost");
+    }
+
+    #[test]
+    fn multi_probe_no_majority_falls_to_manual_review() {
+        use crate::scanner::types::{DomainStatus, build_scan_result};
+
+        let make = |v: Verdict, conf: u8| {
+            build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                v,
+                conf,
+                Some(403),
+                "test".to_string(),
+                None,
+            )
+        };
+
+        // All three different — no majority
+        let attempts = vec![
+            make(Verdict::GeoBlocked, 78),
+            make(Verdict::WafBlocked, 72),
+            make(Verdict::Captcha, 68),
+        ];
+        let result = stabilize_scan_attempts(attempts);
+        assert_eq!(result.routing_decision, RoutingDecision::ManualReview);
+        assert!(
+            result.reason.contains("unstable"),
+            "should be unstable, got: {}",
+            result.reason
+        );
     }
 }
