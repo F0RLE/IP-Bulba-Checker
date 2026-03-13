@@ -23,11 +23,10 @@ main.rs ─── orchestrate scan → write outputs
     │       ├── comparison.rs  local vs control-proxy diff
     │       └── reports.rs     text reports
     │
-    ├─► progress.rs ── realtime console progress bar logic
-    │
+    ├─► progress.rs ── realtime console progress bar
     ├─► pipeline.rs ── assemble blocked domain lists, write files
-    │
-    └─► router_exports.rs ── sing-box / Xray / OpenWRT / geosite.dat
+    ├─► router_exports.rs ── sing-box / Xray / OpenWRT exports
+    └─► geosite.rs ── protobuf geosite.dat compiler
 ```
 
 ---
@@ -38,7 +37,7 @@ main.rs ─── orchestrate scan → write outputs
 
 | Module | Responsibility |
 |---|---|
-| `main.rs` | Entry point (~770 lines). Orchestrates the scan loop and output stages. |
+| `main.rs` | Entry point. Orchestrates scan loop and output stages. |
 | `cli.rs` | `Args` struct, enums, domain input parsing, path helpers. |
 | `progress.rs` | Realtime dynamic console UI (`LiveBar`), live configuration rendering. |
 | `pipeline.rs` | Filtering pending domains, assembling blocked lists, writing output files. |
@@ -69,14 +68,23 @@ main.rs ─── orchestrate scan → write outputs
 ## Verdict model
 
 ```
-Accessible      ─ no block signals, normal HTTP response
-GeoBlocked      ─ geo restriction page confirmed (body/redirect/status)
-Captcha         ─ challenge / bot-check page (may be geo or WAF)
-WAF             ─ WAF actively blocking (not just present)
-ProxyRequired   ─ comparison: control-proxy ok, local blocked
-NeedsReview     ─ ambiguous, flagged for manual check
-Dead            ─ unreachable on all transports
+Accessible        ─ normal HTTP response, no block signals
+GeoBlocked        ─ geo restriction confirmed (body/redirect/status/451)
+WafBlocked        ─ WAF actively blocking (not just CDN presence)
+Captcha           ─ challenge / bot-check page
+NetworkBlocked    ─ ISP-level block (Rostelecom, Beltelecom, etc.)
+ApiBlocked        ─ JSON API returned geo/access-denied error
+RateLimited       ─ HTTP 429 / rate-limit signature matched
+UnexpectedStatus  ─ non-2xx without a known block signature
+TlsFailure        ─ TLS handshake / certificate error
+Unreachable       ─ TCP timeout / DNS failure
 ```
+
+> **RoutingDecision** (derived from verdict + confidence):
+> `ProxyRequired` · `DirectOk` · `ManualReview`
+>
+> **ComparisonDecision** (dual-vantage output):
+> `ConfirmedProxyRequired` · `CandidateProxyRequired` · `ConsistentBlocked` · `ConsistentDirect` · `NeedsReview`
 
 ---
 

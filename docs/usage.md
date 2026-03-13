@@ -45,22 +45,22 @@ HOST,example.com
 
 ```sh
 # Default scan (safe profile, simple exports)
-bulbascan -i domains.txt
+bulbascan domains.txt
 
 # With a HTTP control proxy for dual-vantage comparison
-bulbascan -i domains.txt -x http://user:pass@host:port
+bulbascan domains.txt -x http://user:pass@host:port
 
 # Import domains from geosite.dat, specific category
-bulbascan --import-geosite geosite.dat --import-geosite-category ru-blocked
+bulbascan geosite.dat --import-geosite-category ru-blocked
 
 # Router-oriented exports (sing-box, Xray, OpenWRT)
-bulbascan -i domains.txt --export-profile router
+bulbascan domains.txt --export-profile router
 
 # Full run: router exports + state management
-bulbascan -i domains.txt -x http://... --state-dir state-ru --export-profile router
+bulbascan domains.txt -x http://... --state-dir state-ru --export-profile router
 
 # Aggressive scan profile
-bulbascan -i domains.txt --scan-profile aggressive -x socks5://127.0.0.1:1080
+bulbascan domains.txt --scan-profile aggressive -x socks5://127.0.0.1:1080
 ```
 
 ---
@@ -156,10 +156,10 @@ Workers can be set from 1 to **1000** (hard cap). The profile name and tier show
 
 ## Scan profiles
 
-| Profile | Default workers | Secondary probes | Browser probes | Control browser |
-|---|---|---|---|---|
-| `safe` | 50 | 1 | 1 | no |
-| `aggressive` | 200 | 4 | 4 | yes |
+| Profile | Default workers | Secondary probes | Browser probes | Retest attempts | Control browser |
+|---|---|---|---|---|---|
+| `safe` | 50 | 1 | 1 | 1 | no |
+| `aggressive` | 200 | unlimited | unlimited | 2 | yes |
 
 Use `aggressive` only when you need the deepest possible confirmation and accept a noisier request pattern toward target servers.
 

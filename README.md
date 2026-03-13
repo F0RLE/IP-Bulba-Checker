@@ -71,7 +71,7 @@ cargo test
 
 ## Development
 
-Built with AI-assisted tooling (Antigravity). Architectural decisions, detection logic, signatures, and export formats are designed and directed by the author. AI accelerates implementation; engineering judgment is human.
+Built with AI-assisted tooling (Antigravity, Claude, and similar agentic coding tools). Architectural decisions, detection logic, signatures, and export formats are designed and directed by the author. AI accelerates implementation; engineering judgment is human.
 
 ## License
 
