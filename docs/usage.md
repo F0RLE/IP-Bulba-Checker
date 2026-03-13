@@ -169,6 +169,15 @@ Use `aggressive` only when you need the deepest possible confirmation and accept
 
 Running with `--control-proxy` (short: `-x`) enables dual-vantage mode — each domain is scanned both locally and through the proxy, and verdicts are compared. This is the strongest path to geo-confirmation.
 
+> [!IMPORTANT]
+> **The control proxy MUST be located outside your blocked jurisdiction.**
+> If it is in the same country or AS as your local connection, both paths see the
+> same ISP blocks — domains will show `ConsistentBlocked` and NOT be added to
+> your proxy list. Use a proxy in EU or US.
+>
+> Quick check: if `confirmed_proxy_required` output is suspiciously small (<1% of
+> your list), the control proxy is likely in the wrong region.
+
 Supported proxy formats:
 - `http://user:pass@host:port`
 - `socks5://user:pass@host:port`
@@ -187,6 +196,42 @@ xray run -c xray-control.json
 # 3. Scan with the control proxy
 bulbascan -i domains.txt -x socks5h://127.0.0.1:1080
 ```
+
+---
+
+## Understanding the results
+
+### Why `unreachable` matters
+
+`Unreachable` domains (DNS timeout / TCP timeout) are reported as `Dead` **without a control proxy**. However, many of them are actually ISP-level blocks that are indistinguishable from truly dead servers:
+
+| Without `-x` | With `-x` (external proxy) |
+|---|---|
+| Local: timeout → `Unreachable` | Local: timeout, Proxy: `DirectOk` → `ConfirmedProxyRequired` ✅ |
+| Local: timeout → `Unreachable` | Local: timeout, Proxy: timeout → `ConsistentBlocked` (globally dead) |
+
+This is why running without an external control proxy yields a fraction of the real blocked list.
+
+### WAF / captcha are not always global bot-protection
+
+If you run Bulbascan from a **residential IP** in a country with active internet censorship:
+- A Cloudflare managed challenge served to your residential IP = geo-specific block rule configured by the site owner
+- A WAF 403 from Akamai / Imperva = may be an IP-range block targeting your country
+
+Without a control proxy, these stay in `manual_review`. With an external proxy:
+- Proxy sees `DirectOk` → `ConfirmedProxyRequired` (it IS a geo-block)
+- Proxy also gets WAF → `ConsistentBlocked` (global bot protection, not your problem)
+
+### Expected results (residential IP, ru-blocked list, external EU/US proxy)
+
+```
+proxy_required / confirmed_proxy_required:  3 000 – 10 000
+unreachable (truly dead globally):          5 000 – 8 000
+direct_ok:                                 40 000 – 55 000
+manual_review (still ambiguous):            < 5 000
+```
+
+If `proxy_required` is below 1 000 on a 75 K ru-blocked list, the control proxy is likely in the wrong region.
 
 ---
 

@@ -86,7 +86,35 @@ Unreachable       ─ TCP timeout / DNS failure
 > **ComparisonDecision** (dual-vantage output):
 > `ConfirmedProxyRequired` · `CandidateProxyRequired` · `ConsistentBlocked` · `ConsistentDirect` · `NeedsReview`
 
+> [!NOTE]
+> `ConsistentBlocked` means **both** local and control-proxy paths are blocked. This
+> could mean the site is dead globally, OR the control proxy is in the same blocked
+> jurisdiction as the local path. An external (EU/US) proxy is required to
+> correctly separate geo-blocks from genuinely dead domains.
+
 ---
+
+## Dual-vantage accuracy model
+
+The scanner classifies each domain independently on two paths:
+
+```
+Local path  (home/residential IP in blocked country)
+     │
+     ├── Accessible → DirectOk
+     ├── GeoBlocked / WAF / Captcha → compare with control
+     └── Unreachable (timeout) → compare with control
+
+Control path  (MUST be external EU/US proxy)
+     │
+     ├── DirectOk  + Local blocked → ConfirmedProxyRequired  ✅
+     ├── DirectOk  + Local timeout → ConfirmedProxyRequired  ✅ (ISP block)
+     └── Blocked   + Local blocked → ConsistentBlocked       (dead or same region)
+```
+
+Key invariant: **the value of the tool scales directly with the geographic distance
+between local path and control proxy**. Same-country proxy = useless for detecting
+national-level blocks.
 
 ## Service model
 
