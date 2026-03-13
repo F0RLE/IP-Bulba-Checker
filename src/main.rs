@@ -45,6 +45,39 @@ fn save_workers(path: &str, n: usize) {
     let _ = std::fs::write(path, n.to_string());
 }
 
+/// Look up the 2-letter country code seen from `proxy` (or from the local path
+/// when `proxy` is `None`) by querying <https://ipinfo.io/country>.
+/// Returns `None` on any error (timeout, parse failure, etc.) — the check is
+/// advisory and must never block the scan.
+async fn fetch_country(proxy: Option<&str>, timeout_secs: u64) -> Option<String> {
+    use std::time::Duration;
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs.min(8)))
+        .user_agent("bulbascan-geo-check/1");
+
+    if let Some(proxy_url) = proxy {
+        builder = builder.proxy(reqwest::Proxy::all(proxy_url).ok()?);
+    }
+
+    let client = builder.build().ok()?;
+    let text = client
+        .get("https://ipinfo.io/country")
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+
+    let country = text.trim().to_uppercase();
+    if country.len() == 2 && country.chars().all(|c| c.is_ascii_alphabetic()) {
+        Some(country)
+    } else {
+        None
+    }
+}
+
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> anyhow::Result<()> {
@@ -401,10 +434,11 @@ async fn main() -> anyhow::Result<()> {
     // Output path string passed to LiveBar for the dynamic profile header.
     let output_display = args.results_dir.display().to_string();
 
+    let mut final_workers = concurrency;
     let scan_results = if domains.is_empty() {
         Vec::new()
     } else {
-        let Some((results, final_workers)) = scanner::run_scan(
+        let Some((results, fw)) = scanner::run_scan(
             domains.clone(),
             proxies,
             concurrency,
@@ -429,7 +463,8 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         };
         // Persist the live-adjusted worker count for next run.
-        save_workers(WORKERS_FILE, final_workers);
+        final_workers = fw;
+        save_workers(WORKERS_FILE, fw);
         results
     };
 
@@ -545,13 +580,63 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => eprintln!("Error writing control proxy health: {e}"),
         }
 
+        // ── Proxy geo-location validation ─────────────────────────────────────
+        // Warn the user if the control proxy appears to be in the same country
+        // as the local network path — in that case geo-blocking is undetectable.
+        {
+            let local_country = fetch_country(None, args.timeout).await;
+            let proxy_country = fetch_country(Some(&control_proxy), args.timeout).await;
+            match (local_country.as_deref(), proxy_country.as_deref()) {
+                (Some(local), Some(proxy)) if local.eq_ignore_ascii_case(proxy) => {
+                    eprintln!(
+                        "[WARN] Control proxy is in the same country ({local}) as the local path."
+                    );
+                    eprintln!(
+                        "       Geo-blocking will NOT be detectable. Use an external EU/US proxy."
+                    );
+                }
+                (Some(local), Some(proxy)) => {
+                    println!("Control proxy geo-check: local={local}, proxy={proxy} — OK");
+                }
+                _ => {
+                    // ipinfo.io unreachable, non-fatal
+                }
+            }
+        }
+
         if scanner::should_run_control_comparison(&control_health) {
+            // ── Smart comparison pre-filter ───────────────────────────────────
+            // Domains already confirmed direct_ok locally do not need a second
+            // scan — the control proxy won't change a working result. Only send
+            // unreachable, blocked, and manual_review domains for comparison.
+            // This reduces the comparison scan domain count by ~55% on typical
+            // RU/BY blocked lists where ~41 k of 75 k domains are direct_ok.
+            let comparison_domains: Vec<String> = domains
+                .iter()
+                .filter(|d| {
+                    !scan_results.iter().any(|r| {
+                        r.domain == **d && r.routing_decision == scanner::RoutingDecision::DirectOk
+                    })
+                })
+                .cloned()
+                .collect();
+            let skipped_direct = domains.len().saturating_sub(comparison_domains.len());
+            if skipped_direct > 0 {
+                println!(
+                    "Comparison pre-filter: skipping {skipped_direct} direct_ok domains (scanning {} domains via control proxy).",
+                    comparison_domains.len()
+                );
+            }
+
+            // Blank separator so the second scan's progress bar does not
+            // overwrite the first scan's completion messages.
+            println!();
             println!("Control proxy is healthy. Running comparison scan...");
 
             let Some((control_results, _)) = scanner::run_scan(
-                domains,
+                comparison_domains,
                 vec![control_proxy],
-                concurrency,
+                final_workers,
                 args.results_dir.join("control_ok.log"),
                 args.results_dir.join("control_blocked.log"),
                 args.timeout,

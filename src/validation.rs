@@ -679,6 +679,7 @@ mod tests {
             service_role: Some("web".into()),
             local_verdict: Verdict::GeoBlocked,
             local_routing_decision: RoutingDecision::ProxyRequired,
+            local_confidence: 90,
             local_evidence: EvidenceBundle::default(),
             control_verdict: Verdict::Accessible,
             control_routing_decision: RoutingDecision::DirectOk,

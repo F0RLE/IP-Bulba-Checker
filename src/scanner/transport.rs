@@ -164,10 +164,7 @@ pub(crate) fn should_run_control_comparison(health: &ControlProxyHealth) -> bool
 pub(crate) async fn send_via_reqwest(
     client: &FallbackClient,
     url: &str,
-    _proxy: Option<&str>,
     user_agent: &str,
-    _timeout_secs: u64,
-    _max_redirects: usize,
 ) -> anyhow::Result<reqwest::Response> {
     let response = client
         .get(url)
@@ -211,16 +208,7 @@ async fn run_control_proxy_check(
     let fallback_client = build_fallback_client(Some(proxy_url), timeout_secs, max_redirects)
         .expect("should build proxy client for probe");
 
-    match send_via_reqwest(
-        &fallback_client,
-        target,
-        Some(proxy_url),
-        user_agent,
-        timeout_secs,
-        max_redirects,
-    )
-    .await
-    {
+    match send_via_reqwest(&fallback_client, target, user_agent).await {
         Ok(response) => {
             let status = response.status();
             let detail = format!("HTTP {}", status.as_u16());
@@ -269,10 +257,7 @@ pub(crate) async fn preflight_control_proxy(
     let https_example_check = match send_via_reqwest(
         &fallback_client,
         "https://example.com/",
-        Some(proxy_url),
         signatures::get_random_user_agent(),
-        timeout_secs,
-        max_redirects,
     )
     .await
     {
@@ -300,10 +285,7 @@ pub(crate) async fn preflight_control_proxy(
     let https_trace_check = match send_via_reqwest(
         &fallback_client,
         "https://cloudflare.com/cdn-cgi/trace",
-        Some(proxy_url),
         signatures::get_random_user_agent(),
-        timeout_secs,
-        max_redirects,
     )
     .await
     {

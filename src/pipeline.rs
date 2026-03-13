@@ -51,11 +51,22 @@ pub(crate) fn blocked_domains_from_results(results: &[ScanResult]) -> Vec<String
     domains
 }
 
-/// Collect confirmed-proxy-required domains from control comparison results.
+/// Collect proxy-required domains from control comparison results.
+/// Includes both `ConfirmedProxyRequired` (local routing was already
+/// `ProxyRequired`) and `CandidateProxyRequired` (locally `ManualReview`
+/// but control proxy proved the domain is accessible externally — these
+/// are silent ISP-level drops that the dual-vantage scan is specifically
+/// designed to detect).
 pub(crate) fn blocked_domains_from_comparisons(comparisons: &[ComparisonResult]) -> Vec<String> {
     let mut domains = comparisons
         .iter()
-        .filter(|c| c.decision == ComparisonDecision::ConfirmedProxyRequired)
+        .filter(|c| {
+            matches!(
+                c.decision,
+                ComparisonDecision::ConfirmedProxyRequired
+                    | ComparisonDecision::CandidateProxyRequired
+            )
+        })
         .map(|c| c.domain.clone())
         .collect::<Vec<_>>();
     domains.sort();

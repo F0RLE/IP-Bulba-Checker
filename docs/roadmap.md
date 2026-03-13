@@ -4,58 +4,7 @@
 
 ## v0.1.2 — Signal Quality
 
-### Proxy geo-location validation (~40 lines)
-Before running the comparison scan, check the external IP of the control proxy (e.g. via `https://ipinfo.io`) and compare its country/AS against the local external IP. If both are in the same country or same AS, emit a clear warning:
-```
-[WARN] Control proxy appears to be in the same country (BY/RU) as local path.
-       Geo-blocking will NOT be detectable. Use an external EU/US proxy.
-```
-Prevents the silent case where users get ~0 confirmed results and don’t know why.
-
-### Smart comparison pre-filter (~50 lines)
-The comparison scan currently re-runs the ENTIRE pending domain list through the control proxy. Domains classified as `direct_ok` locally do not need comparison. Filter to only re-run: `unreachable`, `manual_review` (WAF/captcha/unexpected), and `proxy_required`. Reduces comparison scan size by ~55% on a typical ru-blocked list (direct\_ok ~41K of 75K) and cuts total dual-vantage time roughly in half.
-
-### CF clearance extraction after browser verify (~60 lines)
-When browser verify successfully passes a Cloudflare managed challenge, the browser holds a valid `cf_clearance` cookie that is currently discarded. Extract it from the session, replay the HTTP request via `wreq` with that cookie, and classify the real page content. Lets the scanner correctly resolve Cloudflare-protected geo-blocks instead of leaving them in `captcha`/`manual_review`.
-
-### Warmed browser session pool (~100 lines)
-Each `--browser` verify spawns a fresh headless browser per domain — slow and detectable by Cloudflare Bot Management (new fingerprint, no history). Replace with a small persistent pool (1–3 sessions). Sessions accumulate cookies, localStorage, and TLS history, making challenges significantly easier to pass and improving throughput.
-
-### Redirect chain deep scan (~60 lines)
-`classify_redirect()` in `analysis.rs` checks only the final URL. Extend to inspect intermediate redirect hops. Some geo-blocks do a two-step redirect through a neutral CDN URL before landing on a blockpage.
-
-### DOM-aware body scoring (~100 lines)
-Weight body matches by HTML location: `<title>` = strongest, `<h1>` = strong, body text = weak. Pages with >20 `<a>` links get penalty halved (real pages have navigation; block pages don't). Requires a lightweight HTML tag scanner — no full DOM parser needed.
-
-### `UnexpectedStatus` reclassification via comparison (~30 lines)
-`UnexpectedStatus` (non-2xx without a block signature) always routes to `ManualReview`. When control proxy is present: if local = `UnexpectedStatus` and control = `DirectOk` → upgrade to `CandidateProxyRequired`. `comparison.rs` already handles `ConfirmedProxyRequired` and `CandidateProxyRequired` but misses this specific gap. Reduces manual review queue substantially.
-
-### Confidence boost on consistent network evidence (~20 lines)
-In `comparison.rs`, when local TCP/TLS fails but control path DNS resolves → already adds a network note. Extend: when network evidence strongly indicates ISP-level block (local tcp/443 fail + local DNS NXDOMAIN + control path DNS ok) → boost `CandidateProxyRequired` → 90+ confidence. `NetworkEvidence` struct already tracks all required fields.
-
-### Compare-Scan UI Polish (~20 lines)
-When using `--control-proxy`, the second scan's progress bar overwrites the end-of-scan export messages from the first run, and the dynamic `workers` count (set via up/down arrows) is reset back to the startup default. Need to cleanly separate the two logs and pass the final `workers` value into the comparison `run_scan()`.
-
-### Extract Control-Scan into Dedicated Function (~50 lines)
-The control-proxy comparison logic is currently inlined in `main()`, making it >250 lines long and hard to follow. Extract into `run_comparison_scan(domains, control_proxy, concurrency, args, scan_results) -> anyhow::Result<()>` in a new `comparison.rs` (or alongside `pipeline.rs`). `main()` becomes a thin orchestrator: load → scan → compare (if proxy) → export. No behaviour change — pure structural refactor.
-
-### Configurable DOM Geo-markers (~40 lines)
-`browser_title_supports_geo` in `analysis.rs` currently hardcodes Russian/Ukrainian keywords (`"недоступ"`, `"регион"`, etc.). Extract these into `profiles.toml` or a dedicated signature file to decouple the core logic from specific locales.
-
-### Adaptive Body Skip Threshold (~10 lines)
-Currently, HTTP 200 responses with body size >32KB skip signature scanning. Enhance `skip_body_scan` to dynamically adjust this threshold based on the `Content-Type` (e.g., skip 100% of large binaries, but scan text up to 100KB if the profile specifically expects large WAF pages).
-
-### 429 Exponential Backoff (~30 lines)
-`RateLimited` (HTTP 429) responses currently retry with the same flat `retest_backoff_ms` as any other transient result. Add a dedicated 429 path in `scan_domain()`: on 429, extract `Retry-After` header (if present), clamp to 1–30s, and use exponential backoff with jitter for up to 3 attempts before giving up. Prevents hammering services that are actively rate-limiting and improves accuracy on legitimate sites.
-
-### Deduplicate Body Readers (~20 lines)
-`read_wreq_body_limited()` and `read_reqwest_body_limited()` in `scanner.rs` are identical byte-for-byte except for the type of `response`. Extract into a single generic `read_body_limited<R: AsyncRead>(...)` or a helper trait. Pure DRY refactor, no behaviour change.
-
-### `send_via_reqwest` ignores proxy / timeout args (~5 lines)
-In `transport.rs` `send_via_reqwest()` accepts `proxy`, `timeout_secs`, and `max_redirects` arguments but all three are prefixed with `_` and silently ignored (lines 167–170). The function always uses the pre-built fallback client's settings. Either wire these params in (build client per-call) or remove the dead arguments to avoid false confidence.
-
-### Proxy rotation is global-counter-only (~30 lines)
-In `scanner.rs` the proxy is picked as `proxies[idx % proxies.len()]` using a shared `AtomicUsize`. This round-robins all workers across all proxies uniformly, but doesn't account for proxy latency or failure rate. Add a simple sticky failure counter per proxy index: if a proxy fails N consecutive times, skip it and fall back to the next healthy one.
+(All planned features for this release have been implemented or moved to future releases)
 
 ---
 
