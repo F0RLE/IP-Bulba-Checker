@@ -495,18 +495,18 @@ pub(crate) fn analyze_http_observation(
             choose_better_signal(&mut best_signal, signal.clone());
             signals.push(signal);
         }
-
-        // Check path-based signatures on the final URL too
-        if let Some(mut redirect_signal) = classify_redirect(final_url) {
-            redirect_signal.reason = format!("Final URL: {}", redirect_signal.reason);
-            redirect_signal.confidence = redirect_signal.confidence.saturating_add(5).min(95);
-            choose_better_signal(&mut best_signal, redirect_signal.clone());
-            signals.push(redirect_signal);
-        }
     }
 
     if let Some(mut signal) = classify_status_code(status_code) {
-        signal.reason = format!("HTTP {status_code} {status_label}");
+        let mut reason = format!("HTTP {status_code} {status_label}");
+        if status_code == 429
+            && let Some((_, val)) = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
+        {
+            reason = format!("{reason} | retry-after={val}");
+        }
+        signal.reason = reason;
         choose_better_signal(&mut best_signal, signal.clone());
         signals.push(signal);
     }
