@@ -4,7 +4,7 @@ use crate::signatures;
 use super::TransportErrorKind;
 use super::types::{
     DomainStatus, Evidence, EvidenceBundle, RoutingDecision, ScanPolicy, ScanResult, Verdict,
-    build_scan_result, path_from_url_like, with_evidence,
+    build_scan_result, path_from_url_like, routing_decision_for, with_evidence,
 };
 
 const INFRA_DOMAIN_MARKERS: &[&str] = &[
@@ -86,11 +86,13 @@ pub(crate) fn apply_profile_confidence_adjustment(
         Some(profile) if profile.browser_verification => {
             if matches!(result.verdict, Verdict::GeoBlocked | Verdict::Captcha) {
                 result.confidence = result.confidence.saturating_add(5).min(99);
+                result.routing_decision = routing_decision_for(result.verdict, result.confidence);
             }
         }
         None => {
             if result.verdict == Verdict::WafBlocked {
                 result.confidence = result.confidence.saturating_sub(10);
+                result.routing_decision = routing_decision_for(result.verdict, result.confidence);
             }
         }
         _ => {}
@@ -636,6 +638,7 @@ pub(crate) fn stabilize_scan_attempts(attempts: Vec<ScanResult>) -> ScanResult {
                 .cloned()
             {
                 chosen.confidence = chosen.confidence.saturating_add(3).min(99);
+                chosen.routing_decision = routing_decision_for(chosen.verdict, chosen.confidence);
                 chosen.reason = format!("{} | retest=consensus", chosen.reason);
                 return chosen;
             }
