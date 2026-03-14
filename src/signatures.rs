@@ -64,7 +64,7 @@ pub fn get_random_user_agent() -> &'static str {
     let pool = UA_POOL.get_or_init(|| {
         let mut agents = Vec::with_capacity(32);
 
-        // Chrome on Windows (primary — matches wreq Emulation profile)
+        // Chrome on Windows (primary — matches rquest Chrome impersonation)
         for _ in 0..16 {
             let chrome_ver = fastrand::u32(144..=148);
             agents.push(format!(

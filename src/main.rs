@@ -52,12 +52,12 @@ fn save_workers(path: &str, n: usize) {
 async fn fetch_country(proxy: Option<&str>, timeout_secs: u64) -> Option<String> {
     use std::time::Duration;
 
-    let mut builder = reqwest::Client::builder()
+    let mut builder = rquest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs.min(8)))
         .user_agent("bulbascan-geo-check/1");
 
     if let Some(proxy_url) = proxy {
-        builder = builder.proxy(reqwest::Proxy::all(proxy_url).ok()?);
+        builder = builder.proxy(rquest::Proxy::all(proxy_url).ok()?);
     }
 
     let client = builder.build().ok()?;

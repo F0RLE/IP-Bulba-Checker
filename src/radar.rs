@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Duration;
-use wreq::Client;
+use rquest::Client;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RadarRankingResponse {

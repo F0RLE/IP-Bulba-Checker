@@ -154,7 +154,7 @@ pub(crate) fn classify_status_code(code: u16) -> Option<Evidence> {
 
 pub(crate) fn classify_redirect(url: &str) -> Option<Evidence> {
     let lower = url.to_ascii_lowercase();
-    let parsed = reqwest::Url::parse(url).ok();
+    let parsed = url::Url::parse(url).ok();
 
     let path = parsed
         .as_ref()

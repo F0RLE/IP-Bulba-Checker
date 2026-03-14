@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use reqwest::Client as FallbackClient;
-use wreq::Client;
+use rquest::Client;
 
 use crate::signatures;
 
@@ -17,7 +16,7 @@ pub(crate) fn build_request(
     user_agent: &str,
     proxy: Option<&String>,
     timeout_secs: u64,
-) -> anyhow::Result<wreq::RequestBuilder> {
+) -> anyhow::Result<rquest::RequestBuilder> {
     let mut builder = client
         .get(url)
         .header("User-Agent", user_agent)
@@ -25,7 +24,7 @@ pub(crate) fn build_request(
 
     if let Some(p) = proxy {
         let proxy_obj =
-            wreq::Proxy::all(p).map_err(|e| anyhow::anyhow!("invalid proxy '{p}': {e}"))?;
+            rquest::Proxy::all(p).map_err(|e| anyhow::anyhow!("invalid proxy '{p}': {e}"))?;
         builder = builder.proxy(proxy_obj);
     }
 
@@ -38,7 +37,7 @@ pub(crate) async fn send_with_retries(
     user_agent: &str,
     proxy: Option<&String>,
     timeout_secs: u64,
-) -> anyhow::Result<wreq::Response> {
+) -> anyhow::Result<rquest::Response> {
     let mut last_error = None;
 
     for attempt in 0..=TRANSIENT_RETRY_ATTEMPTS {
@@ -161,11 +160,11 @@ pub(crate) fn should_run_control_comparison(health: &ControlProxyHealth) -> bool
     health.healthy
 }
 
-pub(crate) async fn send_via_reqwest(
-    client: &FallbackClient,
+pub(crate) async fn send_via_rquest(
+    client: &Client,
     url: &str,
     user_agent: &str,
-) -> anyhow::Result<reqwest::Response> {
+) -> anyhow::Result<rquest::Response> {
     let response = client
         .get(url)
         .header("User-Agent", user_agent)
@@ -178,20 +177,19 @@ pub(crate) fn build_fallback_client(
     proxy: Option<&str>,
     timeout_secs: u64,
     max_redirects: usize,
-) -> anyhow::Result<FallbackClient> {
-    let mut builder = FallbackClient::builder()
+) -> anyhow::Result<Client> {
+    let mut builder = Client::builder()
         .brotli(true)
         .gzip(true)
         .zstd(true)
-        .http2_adaptive_window(true)
-        .redirect(reqwest::redirect::Policy::limited(max_redirects))
+        .redirect(rquest::redirect::Policy::limited(max_redirects))
         .timeout(Duration::from_secs(timeout_secs));
 
     if let Some(proxy_url) = proxy {
         builder =
             builder
-                .proxy(reqwest::Proxy::all(proxy_url).map_err(|err| {
-                    anyhow::anyhow!("invalid reqwest proxy '{proxy_url}': {err}")
+                .proxy(rquest::Proxy::all(proxy_url).map_err(|err| {
+                    anyhow::anyhow!("invalid rquest proxy '{proxy_url}': {err}")
                 })?);
     }
 
@@ -208,11 +206,11 @@ async fn run_control_proxy_check(
     let fallback_client = build_fallback_client(Some(proxy_url), timeout_secs, max_redirects)
         .expect("should build proxy client for probe");
 
-    match send_via_reqwest(&fallback_client, target, user_agent).await {
+    match send_via_rquest(&fallback_client, target, user_agent).await {
         Ok(response) => {
             let status = response.status();
             let detail = format!("HTTP {}", status.as_u16());
-            let kind = if status == reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+            let kind = if status == rquest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
                 ControlProxyFailureKind::AuthFailed
             } else if status.is_server_error() {
                 ControlProxyFailureKind::UnknownFailure
@@ -254,7 +252,7 @@ pub(crate) async fn preflight_control_proxy(
     let fallback_client = build_fallback_client(Some(proxy_url), timeout_secs, max_redirects)
         .expect("should build proxy client for probe");
 
-    let https_example_check = match send_via_reqwest(
+    let https_example_check = match send_via_rquest(
         &fallback_client,
         "https://example.com/",
         signatures::get_random_user_agent(),
@@ -263,7 +261,7 @@ pub(crate) async fn preflight_control_proxy(
     {
         Ok(response) => ControlProxyCheck {
             target: "https://example.com/".to_string(),
-            kind: if response.status() == reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+            kind: if response.status() == rquest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
                 ControlProxyFailureKind::AuthFailed
             } else if response.status().is_server_error() {
                 ControlProxyFailureKind::UnknownFailure
@@ -282,7 +280,7 @@ pub(crate) async fn preflight_control_proxy(
             detail: err.to_string(),
         },
     };
-    let https_trace_check = match send_via_reqwest(
+    let https_trace_check = match send_via_rquest(
         &fallback_client,
         "https://cloudflare.com/cdn-cgi/trace",
         signatures::get_random_user_agent(),
@@ -291,7 +289,7 @@ pub(crate) async fn preflight_control_proxy(
     {
         Ok(response) => ControlProxyCheck {
             target: "https://cloudflare.com/cdn-cgi/trace".to_string(),
-            kind: if response.status() == reqwest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+            kind: if response.status() == rquest::StatusCode::PROXY_AUTHENTICATION_REQUIRED {
                 ControlProxyFailureKind::AuthFailed
             } else if response.status().is_server_error() {
                 ControlProxyFailureKind::UnknownFailure
