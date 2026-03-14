@@ -83,8 +83,8 @@ pub(crate) async fn run_browser_dom_dump(
         .arg("--disable-blink-features=AutomationControlled")
         // Evasion: Realistic window size
         .arg("--window-size=1920,1080")
-        // Evasion: Match the rquest Chrome 133 profile
-        .arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+        // Evasion: Modern Chrome User-Agent
+        .arg("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
         .arg("--accept-lang=en-US,en;q=0.9")
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("--dump-dom");
