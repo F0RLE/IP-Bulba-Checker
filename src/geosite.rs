@@ -1,5 +1,5 @@
 use prost::Message;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Domain matching type for `V2Ray` routing
@@ -100,36 +100,37 @@ fn compile_categories(
 ) -> anyhow::Result<()> {
     let mut site_entries = Vec::new();
 
-    for (cat_name, domains) in categories {
-        // 2. Optimize domains per category
-        let mut sorted = domains;
-        sorted.sort_by_key(|d| d.split('.').count());
+    for (cat_name, mut domains) in categories {
+        // 1. Normalize domains (lowercase, trim)
+        for d in &mut domains {
+            *d = d.trim().to_lowercase();
+        }
 
-        let mut optimized = Vec::new();
-        let mut base_domains: HashSet<String> = HashSet::new();
+        // 2. Sort by reversed segments for O(N log N) minimization
+        // This groups `google.com`, `api.google.com`, `www.google.com` together in that exact order.
+        domains.sort_unstable_by(|a, b| a.rsplit('.').cmp(b.rsplit('.')));
 
-        for domain in sorted {
-            let domain_low = domain.trim().to_lowercase();
-            if domain_low.is_empty() {
+        // 3. One-pass filtering (O(N))
+        let mut optimized = Vec::with_capacity(domains.len());
+        let mut current_base: Option<String> = None;
+
+        for domain in domains {
+            if domain.is_empty() {
                 continue;
             }
 
-            let mut is_covered = false;
-            let mut search_start = 0;
-            while let Some(dot_idx) = domain_low[search_start..].find('.') {
-                search_start += dot_idx + 1;
-                let parent = &domain_low[search_start..];
-                if base_domains.contains(parent) {
-                    is_covered = true;
-                    break;
-                }
-            }
+            let is_subdomain = current_base.as_ref().is_some_and(|base| {
+                domain.len() > base.len()
+                    && domain.ends_with(base)
+                    && domain.as_bytes()[domain.len() - base.len() - 1] == b'.'
+            });
 
-            if !is_covered {
-                base_domains.insert(domain_low.clone());
+            if !is_subdomain {
+                // Found a new base domain
+                current_base = Some(domain.clone());
                 optimized.push(Domain {
                     r#type: DomainType::Domain as i32,
-                    value: domain_low,
+                    value: domain,
                 });
             }
         }
