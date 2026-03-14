@@ -7,10 +7,10 @@
 > Focused on high-fidelity browser emulation, next-gen DPI evasion, and extreme performance.
 
 ### 🛡️ Intelligence & Accuracy (WAF & Captcha Bypass)
-- **Next-Gen TLS Fingerprinting (JA4+ / `rquest`):**
-    - Transition from `wreq` to **`rquest`** (BoringSSL-based) for perfect JA4+ signatures.
-    - Implement mandatory support for **X25519-MLKEM768** (Group ID `0x11EC`) to match Chrome 146+ defaults.
-    - Synchronize HTTP/2 SETTINGS and WINDOW_UPDATE frame ordering with the impersonated browser profile.
+- ~~**Next-Gen TLS Fingerprinting (JA4+ / `rquest`):**~~
+    - ~~Transition from `wreq` to **`rquest`** (BoringSSL-based) for perfect JA4+ signatures.~~ *(Completed)*
+    - ~~Implement mandatory support for **X25519-MLKEM768** (Group ID `0x11EC`) to match Chrome 146+ defaults.~~ *(Completed)*
+    - ~~Synchronize HTTP/2 SETTINGS and WINDOW_UPDATE frame ordering with the impersonated browser profile.~~ *(Completed)*
 - **AI Labyrinth Evasion:**
     - Replace generic headless probing with **`Nodriver`** (CDP-based) to bypass `navigator.webdriver` detection.
     - Implement **Visibility-Only Interaction**: Ensure the scanner never follows "invisible" (honeypot) links used by Cloudflare's 2026 AI Labyrinth.
