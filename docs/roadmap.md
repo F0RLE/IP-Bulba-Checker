@@ -6,9 +6,10 @@
 
 > Focused on high-fidelity browser emulation, next-gen DPI evasion, and extreme performance.
 
-- **AI Labyrinth Evasion:**
-    - Replace generic headless probing with **`Nodriver`** (CDP-based) to bypass `navigator.webdriver` detection.
-    - Implement **Visibility-Only Interaction**: Ensure the scanner never follows "invisible" (honeypot) links used by Cloudflare's 2026 AI Labyrinth.
+- **AI Labyrinth Evasion (CDP Injection):**
+    - Transition from raw Chrome CLI to a headless Chromium driver (e.g., using `headless_chrome` or `fantoccini` in Rust).
+    - Inject CDP (Chrome DevTools Protocol) initialization scripts (`Page.addScriptToEvaluateOnNewDocument`) to delete `navigator.webdriver` and mock `window.chrome` before the Cloudflare challenge executes.
+    - Implement **Visibility-Only Interaction**: Ensure the scanner never follows "invisible" (honeypot) links used by Cloudflare's AI Labyrinth.
     - Integrate **CapSolver/2Captcha** API hooks for mandatory interactive Turnstile challenges.
 - **Smart WAF/Captcha Promotion:** 
     - Automatically promote WAF (403) or Captcha results to `ConfirmedProxyRequired` if the local path is blocked but the Control Proxy sees `200 OK`.
@@ -16,9 +17,6 @@
     - Inject resident IP headers (`X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`) with randomized residential CIDR ranges to bypass backend-level reputation filters.
 
 ### 🚀 Performance & Scale
-- ~~**O(N log N) Domain Minimization:**~~ 
-    - ~~Implement a zero-allocation minimizer: Reverse domains (`com.google.www`), sort, and filter redundant subdomains in a single linear pass.~~ *(Completed)*
-    - ~~Goal: Sub-second processing for lists > 100k domains.~~ *(Completed)*
 - **Concurrent Domain Ingestion:** 
     - Parallelize input file processing using `tokio::fs` and async tasks to eliminate startup latency when loading massive community lists.
 - **Moving Average Speed Smoothing:** 
