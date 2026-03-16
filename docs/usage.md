@@ -101,6 +101,80 @@ bulbascan --fetch-radar 500
 
 ---
 
+## Recommended Run Modes
+
+These presets are the practical starting points for selective-proxy work.
+
+### Maximum accuracy
+
+Use this when you want the cleanest geo-block separation and are willing to pay for deeper probing, slower runtime, and more browser activity.
+
+```sh
+bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http://user:pass@proxy:port --state-dir state-ru --export-profile full --timeout 8 --profile aggressive
+```
+
+Use this mode when:
+
+- you are validating a new control proxy
+- you want `comparison_report.txt` and `service_geo_report.txt`
+- you are building a high-confidence routing list
+
+Tradeoffs:
+
+- more requests
+- more browser confirmation attempts
+- slower on very large lists
+
+Important:
+
+- on large lists, `aggressive` can create noticeable browser churn
+- use this mode for validation and high-confidence routing work, not as the default bulk-refresh mode
+
+### Balanced
+
+Use this as the default mode for day-to-day geo filtering. It keeps dual-vantage comparison and full reporting, but avoids the heavier aggressive browser path.
+
+```sh
+bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http://user:pass@proxy:port --state-dir state-ru --export-profile full --timeout 8 --profile safe
+```
+
+Use this mode when:
+
+- you want good geo accuracy without excessive browser checks
+- you are iterating on the same list over time with `--state-dir`
+- you want reports, not just router exports
+
+Tradeoffs:
+
+- less aggressive challenge confirmation than `aggressive`
+- slightly more `ManualReview` leftovers than the deepest mode
+
+### Fast
+
+Use this when you want to refresh router outputs quickly and are willing to accept weaker diagnostics.
+
+```sh
+bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http://user:pass@proxy:port --state-dir state-ru --export-profile router --timeout 6 --profile safe
+```
+
+Use this mode when:
+
+- you mainly care about router exports
+- you want a quicker refresh pass over an already-known list
+- you do not need validation-heavy reports on every run
+
+Tradeoffs:
+
+- fewer diagnostics than `full`
+- weaker audit trail for why a domain ended up proxy-routed
+
+Practical note:
+
+- if your control proxy is slow or unstable, increase `--timeout` to `8-10`
+- if you see too many browser windows or too much browser churn, prefer `--profile safe`
+
+---
+
 ## CLI Reference
 
 | Short | Long | Default | Description |
@@ -160,28 +234,6 @@ The last live worker count is saved to `.bulbascan_workers` and reused on the ne
 
 ---
 
-## Worker Tiers
-
-Workers range from `1` to `1000`.
-
-| Tier | Workers |
-|---|---|
-| Safe | `1–50` |
-| Standard | `51–100` |
-| Balanced | `101–200` |
-| Active | `201–300` |
-| Fast | `301–400` |
-| Turbo | `401–500` |
-| Heavy | `501–600` |
-| Intense | `601–700` |
-| Brute | `701–800` |
-| Rush | `801–900` |
-| Aggressive | `901–1000` |
-
-Practical note: on many home connections, `50–150` workers is the useful range. Higher values often increase rate limits and noise before they increase useful classification throughput.
-
----
-
 ## Scan Profiles
 
 | Profile | Secondary probes | Browser probe paths | Retest attempts | Control-browser verify |
@@ -216,7 +268,7 @@ Supported proxy formats:
 - `socks5://user:pass@host:port`
 - `socks5h://host:port`
 
-Browser verification on proxied paths is only attempted when the proxy can be represented as a browser-compatible proxy server argument. SOCKS5 is the safest option for full comparison coverage.
+Browser verification on proxied paths is only attempted when the proxy can be represented as a browser-compatible proxy server argument. `socks5://` or `socks5h://` is the safest choice for full comparison coverage. Authenticated `http://user:pass@...` control proxies are valid for normal comparison, but they are not the best option for browser-assisted control verification.
 
 ### Xray bootstrap
 
@@ -263,6 +315,12 @@ What it is not for:
 
 - guaranteed captcha bypass
 - solving interactive challenges by default
+
+Operational note:
+
+- for very large lists, browser verification is the most expensive confirmation layer
+- if you are doing a bulk pass and only need strong routing candidates, prefer `--profile safe`
+- use `--profile aggressive` when you are explicitly trading speed for deeper confirmation
 
 ---
 

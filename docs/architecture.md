@@ -16,7 +16,7 @@ cli.rs ──── parse arguments, normalise domains
 main.rs ─── orchestrate scan → write outputs
     │
     ├─► scanner.rs ── async worker pool, progress bar
-    │       ├── transport.rs   wreq (primary) → reqwest (fallback)
+    │       ├── transport.rs   rquest primary path → fallback rquest client
     │       ├── network.rs     DNS / TCP / TLS evidence
     │       ├── analysis.rs    verdict + confidence
     │       ├── browser.rs     Chromium DOM dump + classification

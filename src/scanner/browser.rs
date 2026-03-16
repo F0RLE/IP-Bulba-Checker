@@ -102,17 +102,26 @@ pub(crate) async fn run_browser_dom_dump(
     let mut config_builder = BrowserConfig::builder()
         .chrome_executable(browser_path)
         .user_data_dir(&profile_dir)
-        // Note: We use 'new' headless mode because old headless is easily detected by Cloudflare
+        // Keep the browser fully headless and suppress first-run / sync / promo UI.
         .arg("--headless=new")
         .arg("--disable-gpu")
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-features=ChromeWhatsNewUI")
+        .arg("--disable-sync")
+        .arg("--metrics-recording-only")
+        .arg("--password-store=basic")
+        .arg("--use-mock-keychain")
+        .arg("--hide-crash-restore-bubble")
+        .arg("--disable-notifications")
+        .arg("--disable-popup-blocking")
         .arg("--disable-blink-features=AutomationControlled")
         .arg(format!("--accept-lang={}", stealth_profile.locale()))
         .window_size(
             stealth_profile.screen_width(),
             stealth_profile.screen_height(),
         )
-        .no_sandbox()
-        .disable_default_args();
+        .no_sandbox();
 
     if let Some(proxy_str) = proxy.and_then(browser_proxy_server_arg) {
         config_builder = config_builder.arg(format!("--proxy-server={proxy_str}"));
