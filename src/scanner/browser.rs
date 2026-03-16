@@ -1,14 +1,32 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+use chaser_oxide::cdp::browser_protocol::emulation::{
+    SetLocaleOverrideParams, SetTimezoneOverrideParams,
+};
+use chaser_oxide::{Browser, BrowserConfig, ChaserPage, ChaserProfile};
 use futures::StreamExt;
 use tokio::task::JoinHandle;
 
 use crate::service_profiles;
 
 use super::types::{ScanResult, Verdict};
+
+fn browser_stealth_profile() -> ChaserProfile {
+    let builder = if cfg!(target_os = "windows") {
+        ChaserProfile::windows()
+    } else if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            ChaserProfile::macos_arm()
+        } else {
+            ChaserProfile::macos_intel()
+        }
+    } else {
+        ChaserProfile::linux()
+    };
+
+    builder.build()
+}
 
 pub(crate) fn detect_browser_binary() -> Option<PathBuf> {
     let candidates: &[&str] = if cfg!(target_os = "windows") {
@@ -78,65 +96,71 @@ pub(crate) async fn run_browser_dom_dump(
     url: &str,
     proxy: Option<&str>,
 ) -> anyhow::Result<String> {
-    let profile = std::env::temp_dir().join(format!("bulba-browser-{}", fastrand::u64(..)));
-    
+    let profile_dir = std::env::temp_dir().join(format!("bulba-browser-{}", fastrand::u64(..)));
+    let stealth_profile = browser_stealth_profile();
+
     let mut config_builder = BrowserConfig::builder()
         .chrome_executable(browser_path)
-        .user_data_dir(&profile)
-        .window_size(1920, 1080)
+        .user_data_dir(&profile_dir)
+        // Note: We use 'new' headless mode because old headless is easily detected by Cloudflare
+        .arg("--headless=new")
+        .arg("--disable-gpu")
+        .arg("--disable-blink-features=AutomationControlled")
+        .arg(format!("--accept-lang={}", stealth_profile.locale()))
+        .window_size(
+            stealth_profile.screen_width(),
+            stealth_profile.screen_height(),
+        )
         .no_sandbox()
         .disable_default_args();
 
-    // Evasion arguments
-    let mut args = vec![
-        "--headless=new".to_string(),
-        "--disable-gpu".to_string(),
-        "--disable-blink-features=AutomationControlled".to_string(),
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36".to_string(),
-        "--accept-lang=en-US,en;q=0.9".to_string(),
-    ];
-
     if let Some(proxy_str) = proxy.and_then(browser_proxy_server_arg) {
-        args.push(format!("--proxy-server={proxy_str}"));
+        config_builder = config_builder.arg(format!("--proxy-server={proxy_str}"));
     }
-
-    config_builder = config_builder.args(args);
 
     let (mut browser, mut handler) = match Browser::launch(config_builder.build().map_err(|e| anyhow::anyhow!("config build error: {e}"))?).await {
         Ok(b) => b,
         Err(e) => {
-            let _ = std::fs::remove_dir_all(&profile);
+            let _ = std::fs::remove_dir_all(&profile_dir);
             return Err(anyhow::anyhow!("failed to launch browser: {e}"));
         }
     };
 
     let handler_task: JoinHandle<()> = tokio::task::spawn(async move {
-        loop {
-            let _ = handler.next().await;
-        }
+        while let Some(_) = handler.next().await {}
     });
 
     let page_result = async {
         let page = browser.new_page("about:blank").await?;
-        
-        // Evasion: CDP script injection to overwrite webdriver flag completely.
-        let injection_script = r#"
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            window.chrome = { runtime: {} };
-        "#;
-        
-        page.execute(AddScriptToEvaluateOnNewDocumentParams::builder().source(injection_script).build().unwrap()).await?;
+        let chaser = ChaserPage::new(page);
 
-        // Navigate and wait for the page to settle
-        page.goto(url).await?;
-        page.wait_for_navigation().await?;
-        
-        // Give it a brief moment for Cloudflare/JS to execute
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Apply the same profile across CDP, HTTP headers, and emulation settings.
+        chaser.apply_profile(&stealth_profile).await.map_err(|e| anyhow::anyhow!("failed to apply stealth profile: {e}"))?;
+        chaser
+            .raw_page()
+            .emulate_locale(
+                SetLocaleOverrideParams::builder()
+                    .locale(stealth_profile.locale())
+                    .build(),
+            )
+            .await?;
+        chaser
+            .raw_page()
+            .emulate_timezone(
+                SetTimezoneOverrideParams::builder()
+                    .timezone_id(stealth_profile.timezone())
+                    .build()
+                    .map_err(|e| anyhow::anyhow!("failed to build timezone override: {e}"))?,
+            )
+            .await?;
 
-        let content = page.content().await?;
+        chaser.goto(url).await?;
+        chaser.raw_page().wait_for_navigation().await?;
+        
+        // Give it a brief moment for Cloudflare/JS to execute challenges
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        let content = chaser.raw_page().content().await?;
         Ok::<String, anyhow::Error>(content)
     }
     .await;
@@ -144,7 +168,7 @@ pub(crate) async fn run_browser_dom_dump(
     // Cleanup
     browser.close().await.ok();
     handler_task.abort();
-    let _ = std::fs::remove_dir_all(&profile);
+    let _ = std::fs::remove_dir_all(&profile_dir);
 
     page_result
 }
