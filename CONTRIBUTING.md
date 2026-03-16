@@ -55,6 +55,35 @@ cargo build --release
 
 ---
 
+## Branch workflow
+
+Bulbascan uses a simple staged branch model:
+
+- `feature/*` — one feature or fix per branch
+- `nightly` — integration branch for fresh feature work
+- `dev` — stabilized branch promoted from `nightly`
+- `main` — stable branch and release source
+
+Expected flow:
+
+1. Branch from `nightly`
+2. Implement work in `feature/<name>`
+3. Open a PR into `nightly`
+4. Periodically promote `nightly` into `dev`
+5. Test and stabilize in `dev`
+6. Merge `dev` into `main` for release
+
+Guidelines:
+
+- Keep each feature branch focused on a single change
+- Prefer PR-based merges for `nightly`, `dev`, and `main`
+- Changes to workflow, CI, contributor process, or shared agent instructions should go through a dedicated PR into `nightly`
+- Direct commits without PR are only acceptable for local-only changes that do not affect other contributors
+- Do not use a dedicated release branch unless the workflow changes again
+- If a roadmap item is completed, update `docs/roadmap.md` in the same PR when appropriate
+
+---
+
 ## Adding a service profile
 
 No code changes required. Edit [`profiles.toml`](profiles.toml):
@@ -117,6 +146,7 @@ The specificity scorer already penalises short ambiguous patterns — if your pa
 
 ## Pull request checklist
 
+- [ ] Branch targets the correct base (`nightly` for feature work unless explicitly coordinated otherwise)
 - [ ] `cargo test` passes with no failures
 - [ ] `cargo clippy -- -D warnings` reports zero warnings
 - [ ] New functionality has at least one unit test
