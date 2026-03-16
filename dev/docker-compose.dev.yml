@@ -1,14 +1,14 @@
 services:
   bulbascan-dev:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ..
+      dockerfile: dev/Dockerfile.dev
     container_name: bulbascan-dev
     working_dir: /workspace
     stdin_open: true
     tty: true
     volumes:
-      - .:/workspace
+      - ..:/workspace
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
       - bulbascan-target:/workspace/target

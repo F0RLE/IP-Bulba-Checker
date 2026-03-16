@@ -134,14 +134,14 @@ Recommended daily workflow:
 You can choose either:
 
 - install Rust and build dependencies locally
-- use the provided dev container in [`Dockerfile.dev`](Dockerfile.dev)
+- use the provided dev container in [`dev/Dockerfile.dev`](dev/Dockerfile.dev)
 
 For Windows contributors, native development is the recommended default. Bulbascan's browser-confirmation and selective-proxy behavior are easier to validate on the host network stack than inside a container.
 
 Example Docker-based development flow:
 
 ```sh
-docker build -f Dockerfile.dev -t bulbascan-dev .
+docker build -f dev/Dockerfile.dev -t bulbascan-dev .
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo check
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 ```
@@ -149,8 +149,8 @@ docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 Or with Docker Compose:
 
 ```sh
-docker compose -f docker-compose.dev.yml build
-docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo check
+docker compose -f dev/docker-compose.dev.yml build
+docker compose -f dev/docker-compose.dev.yml run --rm bulbascan-dev cargo check
 ```
 
 Note:

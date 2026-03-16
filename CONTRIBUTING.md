@@ -68,7 +68,7 @@ This project is sensitive to the real browser environment and the real network p
 If you do not want to install Rust and build dependencies directly on your system, use the provided dev container:
 
 ```sh
-docker build -f Dockerfile.dev -t bulbascan-dev .
+docker build -f dev/Dockerfile.dev -t bulbascan-dev .
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo check
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo clippy -- -D warnings
@@ -77,10 +77,10 @@ docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo clipp
 Or use Docker Compose:
 
 ```sh
-docker compose -f docker-compose.dev.yml build
-docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo check
-docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo test
-docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo clippy -- -D warnings
+docker compose -f dev/docker-compose.dev.yml build
+docker compose -f dev/docker-compose.dev.yml run --rm bulbascan-dev cargo check
+docker compose -f dev/docker-compose.dev.yml run --rm bulbascan-dev cargo test
+docker compose -f dev/docker-compose.dev.yml run --rm bulbascan-dev cargo clippy -- -D warnings
 ```
 
 Included in the dev image:
