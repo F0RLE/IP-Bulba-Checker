@@ -1,6 +1,7 @@
 use super::analysis::{
-    choose_better_signal, classify_redirect, classify_status_code, classify_transport_error,
-    is_block_status, is_transient_error, same_measurement, stabilize_scan_attempts,
+    apply_dns_evidence_adjustment, choose_better_signal, classify_redirect, classify_status_code,
+    classify_transport_error, is_block_status, is_transient_error, same_measurement,
+    stabilize_scan_attempts,
     status_from_verdict,
 };
 use super::browser::browser_proxy_server_arg;
@@ -366,6 +367,106 @@ fn comparison_preserves_side_specific_evidence() {
         Some("http_body")
     );
     assert_eq!(comparison.control_evidence.path.as_deref(), Some("/"));
+}
+
+#[test]
+fn dns_failure_with_working_doh_escalates_to_network_blocked() {
+    let result = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 55,
+        http_status: None,
+        reason: "dns lookup failed".into(),
+        block_type: None,
+    };
+
+    let adjusted = apply_dns_evidence_adjustment(
+        result,
+        &NetworkEvidence {
+            dns: ProbeEvidence::failed("kind=nxdomain resolver_control_ok: no such domain"),
+            path_dns: ProbeEvidence::ok("1.1.1.1, 1.0.0.1"),
+            tcp_443: ProbeEvidence::skipped("dns failed"),
+            tls_443: ProbeEvidence::skipped("dns failed"),
+            tcp_80: ProbeEvidence::skipped("dns failed"),
+        },
+    );
+
+    assert_eq!(adjusted.verdict, Verdict::NetworkBlocked);
+    assert_eq!(adjusted.routing_decision, RoutingDecision::ProxyRequired);
+    assert!(adjusted.reason.contains("system DNS nxdomain while DoH resolved"));
+}
+
+#[test]
+fn dns_mismatch_is_recorded_without_overriding_accessible_result() {
+    let result = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 85,
+        http_status: Some(200),
+        reason: "OK".into(),
+        block_type: None,
+    };
+
+    let adjusted = apply_dns_evidence_adjustment(
+        result,
+        &NetworkEvidence {
+            dns: ProbeEvidence::ok("203.0.113.10, 203.0.113.11"),
+            path_dns: ProbeEvidence::ok("198.51.100.10, 198.51.100.11"),
+            tcp_443: ProbeEvidence::ok("203.0.113.10:443"),
+            tls_443: ProbeEvidence::ok("203.0.113.10:443 cert=abcd"),
+            tcp_80: ProbeEvidence::ok("203.0.113.10:80"),
+        },
+    );
+
+    assert_eq!(adjusted.verdict, Verdict::Accessible);
+    assert_eq!(adjusted.routing_decision, RoutingDecision::DirectOk);
+    assert!(adjusted.reason.contains("system DNS differs from DoH"));
+}
+
+#[test]
+fn dns_mismatch_with_failed_direct_tcp_tls_escalates_to_network_blocked() {
+    let result = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 55,
+        http_status: None,
+        reason: "connect failed".into(),
+        block_type: None,
+    };
+
+    let adjusted = apply_dns_evidence_adjustment(
+        result,
+        &NetworkEvidence {
+            dns: ProbeEvidence::ok("203.0.113.10, 203.0.113.11"),
+            path_dns: ProbeEvidence::ok("198.51.100.10, 198.51.100.11"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::skipped("tcp/443 failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+    );
+
+    assert_eq!(adjusted.verdict, Verdict::NetworkBlocked);
+    assert_eq!(adjusted.routing_decision, RoutingDecision::ProxyRequired);
+    assert!(adjusted.reason.contains("system DNS differs from DoH"));
+    assert!(adjusted.reason.contains("failed on direct TCP/TLS probes"));
 }
 
 #[test]

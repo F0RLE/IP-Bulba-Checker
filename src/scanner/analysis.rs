@@ -1,9 +1,12 @@
 use crate::service_profiles;
 use crate::signatures;
+use std::collections::BTreeSet;
+use std::net::IpAddr;
 
 use super::TransportErrorKind;
 use super::types::{
-    DomainStatus, Evidence, EvidenceBundle, RoutingDecision, ScanPolicy, ScanResult, Verdict,
+    DomainStatus, Evidence, EvidenceBundle, NetworkEvidence, ProbeStatus, RoutingDecision,
+    ScanPolicy, ScanResult, Verdict,
     build_scan_result, path_from_url_like, routing_decision_for, with_evidence,
 };
 
@@ -376,6 +379,122 @@ pub(crate) fn is_transient_error(error: &str) -> bool {
         || err.contains("name or service not known")
         || err.contains("could not resolve")
         || err.contains("no such host")
+}
+
+fn parse_ip_detail_set(detail: Option<&str>) -> BTreeSet<IpAddr> {
+    detail
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|part| part.trim().parse::<IpAddr>().ok())
+        .collect()
+}
+
+fn annotate_reason(reason: &str, note: &str) -> String {
+    if reason.contains(note) {
+        reason.to_string()
+    } else {
+        format!("{reason} | {note}")
+    }
+}
+
+fn annotate_signal(existing: Option<String>, note: String) -> Option<String> {
+    match existing {
+        Some(existing) if existing.contains(&note) => Some(existing),
+        Some(existing) => Some(format!("{existing}; {note}")),
+        None => Some(note),
+    }
+}
+
+fn dns_failure_kind(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    detail
+        .strip_prefix("kind=")
+        .and_then(|rest| rest.split_whitespace().next())
+}
+
+pub(crate) fn apply_dns_evidence_adjustment(
+    mut result: ScanResult,
+    network_evidence: &NetworkEvidence,
+) -> ScanResult {
+    if network_evidence.dns.status == ProbeStatus::Skipped
+        || network_evidence.path_dns.status != ProbeStatus::Ok
+    {
+        return result;
+    }
+
+    if network_evidence.dns.status == ProbeStatus::Failed {
+        let kind = dns_failure_kind(network_evidence.dns.detail.as_deref()).unwrap_or("failed");
+        let note = format!("system DNS {kind} while DoH resolved");
+        result.reason = annotate_reason(&result.reason, &note);
+        result.evidence.signal = annotate_signal(result.evidence.signal.take(), note.clone());
+
+        let strong_dns_failure = matches!(kind, "nxdomain" | "servfail" | "timeout" | "refused");
+
+        if strong_dns_failure
+            && matches!(
+                result.verdict,
+                Verdict::Unreachable
+                    | Verdict::TlsFailure
+                    | Verdict::UnexpectedStatus
+                    | Verdict::NetworkBlocked
+            )
+        {
+            result.status = DomainStatus::Blocked;
+            result.verdict = Verdict::NetworkBlocked;
+            result.confidence = result.confidence.max(92);
+            result.routing_decision = routing_decision_for(result.verdict, result.confidence);
+        }
+
+        return result;
+    }
+
+    if network_evidence.dns.status != ProbeStatus::Ok {
+        return result;
+    }
+
+    let system_dns = parse_ip_detail_set(network_evidence.dns.detail.as_deref());
+    let doh_dns = parse_ip_detail_set(network_evidence.path_dns.detail.as_deref());
+    if system_dns.is_empty() || doh_dns.is_empty() {
+        return result;
+    }
+
+    let overlap = system_dns
+        .intersection(&doh_dns)
+        .copied()
+        .collect::<Vec<_>>();
+
+    if overlap.is_empty() {
+        let tcp_failed = network_evidence.tcp_443.status != ProbeStatus::Ok;
+        let tls_failed = network_evidence.tls_443.status != ProbeStatus::Ok;
+        let note = format!(
+            "system DNS differs from DoH: system={} doh={}",
+            network_evidence.dns.detail.as_deref().unwrap_or_default(),
+            network_evidence.path_dns.detail.as_deref().unwrap_or_default()
+        );
+        result.reason = annotate_reason(&result.reason, &note);
+        result.evidence.signal = annotate_signal(result.evidence.signal.take(), note);
+
+        if (tcp_failed || tls_failed)
+            && matches!(
+                result.verdict,
+                Verdict::Unreachable
+                    | Verdict::TlsFailure
+                    | Verdict::UnexpectedStatus
+                    | Verdict::NetworkBlocked
+            )
+        {
+            result.status = DomainStatus::Blocked;
+            result.verdict = Verdict::NetworkBlocked;
+            result.confidence = result.confidence.max(89);
+            result.routing_decision = routing_decision_for(result.verdict, result.confidence);
+            result.reason = annotate_reason(
+                &result.reason,
+                "mismatched system DNS answer also failed on direct TCP/TLS probes",
+            );
+        }
+    }
+
+    result
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]

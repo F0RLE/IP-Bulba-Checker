@@ -21,7 +21,8 @@ mod reports;
 mod transport;
 pub(crate) mod types;
 use analysis::{
-    analyze_http_observation, classify_browser_html, classify_transport_error,
+    analyze_http_observation, apply_dns_evidence_adjustment, classify_browser_html,
+    classify_transport_error,
     relax_infra_root_result, same_measurement, should_try_retest, stabilize_scan_attempts,
     status_from_verdict, verdict_rank,
 };
@@ -691,7 +692,8 @@ async fn scan_domain_once(
         }
     }
 
-    best_result.network_evidence = network_evidence;
+    best_result.network_evidence = network_evidence.clone();
+    best_result = apply_dns_evidence_adjustment(best_result, &network_evidence);
     Ok(best_result)
 }
 
