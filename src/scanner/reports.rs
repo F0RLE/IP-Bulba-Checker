@@ -24,6 +24,12 @@ pub(crate) fn write_human_report(results: &[ScanResult], output_path: &Path) -> 
         if result.network_evidence.dns.status == ProbeStatus::Failed {
             *network_counts.entry("dns_failed").or_default() += 1;
         }
+        if result.reason.contains("while DoH resolved") {
+            *network_counts.entry("dns_locally_blocked_vs_doh").or_default() += 1;
+        }
+        if result.reason.contains("system DNS differs from DoH:") {
+            *network_counts.entry("dns_mismatch_vs_doh").or_default() += 1;
+        }
         if result.network_evidence.tcp_443.status == ProbeStatus::Failed {
             *network_counts.entry("tcp_443_failed").or_default() += 1;
         }

@@ -29,7 +29,7 @@
 |---|---|
 | **Weak control proxy** | If the control proxy is in the same country or a similarly filtered network, comparison quality drops sharply. |
 | **ConsistentBlocked ambiguity** | When both local and control paths are blocked, Bulbascan cannot always separate “globally dead” from “blocked on both paths”. |
-| **DNS manipulation visibility** | The scanner already records network evidence, but dedicated system-DNS vs DoH disagreement reporting is still missing. |
+| **DNS evidence is heuristic, not absolute truth** | Bulbascan now compares system DNS and DoH and distinguishes stronger local DNS-failure cases, but CDN variation and resolver policy differences can still produce ambiguous mismatches. |
 | **Challenge-heavy services** | Captcha / WAF interstitials can still leave some domains in `ManualReview`, especially when browser confirmation is unavailable. |
 | **Incomplete service coverage** | If a service profile lacks enough critical-role hosts, service-level conclusions stay weaker than they could be. |
 | **IPv6** | The scanner is still primarily IPv4-oriented. IPv6-only accessibility can be missed. |

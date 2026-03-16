@@ -19,9 +19,10 @@ Bulbascan scans domain lists and classifies which targets are likely safe to kee
 
 Bulbascan uses a layered detection approach:
 1. **HTTP probing:** Uses `rquest` as the primary client with a fallback request path for harder transport cases.
-2. **Dual-vantage comparison:** Compares the local path with a control proxy to separate local blocking from globally dead or ambiguous domains.
-3. **Browser confirmation:** Uses a local browser as a secondary confirmation layer for challenge-heavy and script-dependent services.
-4. **Signature engine:** Analyzes headers, bodies, redirects, and API responses with an Aho-Corasick matcher.
+2. **DNS evidence:** Compares system DNS with DoH answers to detect stronger local DNS manipulation and suspicious poisoned-answer mismatches.
+3. **Dual-vantage comparison:** Compares the local path with a control proxy to separate local blocking from globally dead or ambiguous domains.
+4. **Browser confirmation:** Uses a local browser as a secondary confirmation layer for challenge-heavy and script-dependent services.
+5. **Signature engine:** Analyzes headers, bodies, redirects, and API responses with an Aho-Corasick matcher.
 
 | Verdict | Meaning |
 |---|---|
@@ -73,6 +74,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 | Feature | Details |
 |---|---|
 | Dual-transport probing | `rquest` primary path with fallback transport handling |
+| DNS-level block detection | System DNS vs DoH comparison, resolver failure classification, and mismatch confirmation via direct TCP/TLS probes |
 | Browser verification | Local browser confirmation for challenge-heavy and script-dependent targets |
 | Signature engine | Aho-Corasick on body/header/API patterns with specificity scoring |
 | RU/BY ISP detection | Rostelecom, Beltelecom, MTS, Beeline, Megafon, TTK block pages |
@@ -123,15 +125,23 @@ Use GitHub Releases or CI artifacts instead of building from source. That is the
 
 ### If you want to develop Bulbascan
 
-You can either:
+Recommended daily workflow:
+
+- edit code on the host system
+- run `cargo check`, `cargo test`, and `cargo clippy` either natively or through the optional dev container
+- run real browser-verification and real network-path checks on the host system
+
+You can choose either:
 
 - install Rust and build dependencies locally
-- use the provided dev container in [`Dockerfile.dev`](Dockerfile.dev)
+- use the provided dev container in [`dev/Dockerfile.dev`](dev/Dockerfile.dev)
+
+For Windows contributors, native development is the recommended default. Bulbascan's browser-confirmation and selective-proxy behavior are easier to validate on the host network stack than inside a container.
 
 Example Docker-based development flow:
 
 ```sh
-docker build -f Dockerfile.dev -t bulbascan-dev .
+docker build -f dev/Dockerfile.dev -t bulbascan-dev .
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo check
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 ```
@@ -139,13 +149,13 @@ docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 Or with Docker Compose:
 
 ```sh
-docker compose -f docker-compose.dev.yml build
-docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo check
+docker compose -f dev/docker-compose.dev.yml build
+docker compose -f dev/docker-compose.dev.yml run --rm bulbascan-dev cargo check
 ```
 
 Note:
 
-- the dev container is for build/test workflows
+- the dev container is optional and mainly useful for build/test workflows
 - real browser verification and real network-path debugging are still better tested on the host system
 
 ## Documentation
