@@ -13,23 +13,23 @@
 
 ---
 
-Bulbascan scans a list of domains and determines whether each one is geo-blocked, WAF-protected, or freely accessible — then exports ready-to-use routing configs for Xray, sing-box, OpenWRT, and V2Ray `geosite.dat`.
+Bulbascan scans domain lists and classifies which targets are likely safe to keep direct, which likely require proxying, and which still need review. It then exports routing configs for Xray, sing-box, OpenWRT, and V2Ray `geosite.dat`.
 
 ## How It Works
 
-Bulbascan uses a multi-layered approach to ensure zero false positives:
-1. **Fast HTTP Probing:** Uses `wreq` (browser-emulating) with a fallback to `reqwest`+`rustls`.
-2. **Dual-Vantage Comparison:** Compares the local ISP response against a trusted Control Proxy to definitively isolate geo-blocks from dead domains.
-3. **Headless Verification:** If a WAF or Captcha is suspected, it transparently spawns a local headless browser to dump the actual DOM and verify the block.
-4. **Signature Engine:** Analyzes headers, body, and API responses against a high-speed Aho-Corasick pattern matcher.
+Bulbascan uses a layered detection approach:
+1. **HTTP probing:** Uses `rquest` as the primary client with a fallback request path for harder transport cases.
+2. **Dual-vantage comparison:** Compares the local path with a control proxy to separate local blocking from globally dead or ambiguous domains.
+3. **Browser confirmation:** Uses a local browser as a secondary confirmation layer for challenge-heavy and script-dependent services.
+4. **Signature engine:** Analyzes headers, bodies, redirects, and API responses with an Aho-Corasick matcher.
 
 | Verdict | Meaning |
 |---|---|
 | ✅ **Accessible** | Reachable directly |
 | 🌍 **GeoBlocked** | Geo-restriction confirmed |
-| 🔀 **ProxyRequired** | Dual-vantage confirmed — must proxy |
+| 🔀 **ProxyRequired** | Strong candidate for selective proxy routing |
 | 🛡️ **WAF** | CDN/WAF actively blocking |
-| 🔍 **NeedsReview** | Ambiguous — flagged for manual check |
+| 🔍 **NeedsReview** | Ambiguous — flagged for manual review |
 | 💀 **Dead** | Unreachable on all transports |
 
 ## Quick Start
@@ -55,7 +55,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 ```
 
 ## Use Cases
-- **Smart Routing (Selective Proxy):** Generate highly accurate `geosite.dat` or sing-box rules to route only blocked services through your proxy, leaving local traffic fast and direct.
+- **Smart Routing (Selective Proxy):** Generate routing inputs that proxy likely blocked services while keeping likely direct traffic local.
 - **Home Routers:** Export directly to OpenWRT / dnsmasq formats for network-wide bypass.
 - **Censorship Analysis:** Discover exactly which layer (DNS, SNI, HTTP) your ISP or a specific service is blocking.
 
@@ -72,8 +72,8 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 
 | Feature | Details |
 |---|---|
-| Dual-transport probing | `wreq` (browser-emulating) first, `reqwest`+`rustls` fallback |
-| Browser verification | Local Chromium DOM dump to confirm captcha vs. hard block |
+| Dual-transport probing | `rquest` primary path with fallback transport handling |
+| Browser verification | Local browser confirmation for challenge-heavy and script-dependent targets |
 | Signature engine | Aho-Corasick on body/header/API patterns with specificity scoring |
 | RU/BY ISP detection | Rostelecom, Beltelecom, MTS, Beeline, Megafon, TTK block pages |
 | 27 service profiles | Editable via `profiles.toml` — no recompilation |
@@ -87,10 +87,21 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 You can easily add custom API checks or service behaviors without recompiling by editing `profiles.toml`:
 
 ```toml
-[services.openai]
-critical_role = "api"
-paths = ["/v1/models", "/api/auth/session"]
-browser_verify = true
+[[services]]
+name = "MyService"
+browser_verification = true
+expected_roles = ["web", "api"]
+critical_roles = ["web", "api"]
+
+[[services.hosts]]
+domain = "myservice.com"
+role = "web"
+probe_paths = ["/", "/login"]
+
+[[services.hosts]]
+domain = "api.myservice.com"
+role = "api"
+probe_paths = ["/"]
 ```
 
 ## Building
@@ -103,6 +114,32 @@ cargo test
 ```
 
 **Requirements:** Rust 1.94+
+
+## Usage vs Development
+
+### If you just want to use Bulbascan
+
+Use GitHub Releases or CI artifacts instead of building from source. That is the intended path for normal scanning and avoids installing Rust and build dependencies locally.
+
+### If you want to develop Bulbascan
+
+You can either:
+
+- install Rust and build dependencies locally
+- use the provided dev container in [`Dockerfile.dev`](Dockerfile.dev)
+
+Example Docker-based development flow:
+
+```sh
+docker build -f Dockerfile.dev -t bulbascan-dev .
+docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo check
+docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
+```
+
+Note:
+
+- the dev container is for build/test workflows
+- real browser verification and real network-path debugging are still better tested on the host system
 
 ## Documentation
 

@@ -1,89 +1,102 @@
 # Output Files and Export Profiles
 
-> All output files are written to `--results-dir` (defaults to `results_<input-filename>` next to the input file).
+> All outputs are written into `--results-dir`.
+>
+> If `--results-dir` is left at the default and an input file is provided, Bulbascan automatically derives `results_<input-stem>`.
 
 ---
 
 ## Export Profiles
 
-### 1. `simple` (default)
-Essential outputs for basic blocklist creation and drag-and-drop usage.
+### `simple` (default)
+
+Minimal outputs for basic selective-proxy usage.
 
 | File | Contents |
 |---|---|
-| `blocked-domains.txt` | Plain list of proxy-required domains (format controlled by `--blocked-list-format`) |
-| `geosite.dat` | V2Ray/Xray geosite binary |
-| `blocked.log` | Detailed audit log of all blocked/geo-blocked domains |
-| `ok.log` | Log of all accessible (direct) domains |
+| `blocked-domains.txt` | Blocked-domain list in the format selected by `--blocked-list-format` |
+| `blocked.log` | Detailed log for non-direct results |
+| `geosite.dat` | Generated geosite binary |
+| `ok.log` | Detailed log for direct results |
 
-### 2. `router`
-Adds firmware-native routing rules and advanced comparison reports.
+Note:
 
-Everything in **Simple**, plus:
+- if `simple` is used, `ok.log` is created during the scan and then removed at the end
+- the primary intended outputs in `simple` mode are the blocked-domain list and `geosite.dat`
 
-| File | Contents |
-|---|---|
-| `report.txt` | Human-readable scan summary with distribution stats |
-| `services_report.txt` | Service-level grouping and verdict confidence |
-| `proxy_required.txt` | All proxy-required domains as a newline-delimited list |
-| `direct_ok.txt` | All confirmed direct domains as a newline-delimited list |
-| `manual_review.txt` | Ambiguous domains flagged for manual check |
-| `sing-box-rule-set.json` | sing-box domain rule-set (Version 4) |
-| `sing-box-route-snippet.json` | sing-box route rule snippet connecting the rule-set |
-| `xray-routing-rule.json` | Xray routing rule (`full:domain` format) |
-| `openwrt-pbr-domains.txt` | Domain policies for OpenWrt PBR |
-| `openwrt-dnsmasq-ipset.conf` | `ipset=` configuration snippet for `dnsmasq-full` |
-| `strict-*` | **Dual-vantage confirmed** variants of all the above (requires `--control-proxy`) |
-| `known-service-bundle-*` | Minimal per-service host sets covering all critical roles |
-| `generic-apex-bypass-*` | Apex-level fallback rules for non-profiled domains |
-| `comparison_report.txt` | Local vs Control-vantage comparison analysis |
-| `confirmed_proxy_required.txt` | Domains confirmed proxy-required by dual-vantage |
-| `control_proxy_health.txt` | Health preflight result for the control proxy |
-| `service_geo_report.txt` | High-confidence service-level geo conclusions |
+### `router`
 
-### 3. `full`
-Includes detailed diagnostic reports for accuracy validation.
+Adds router-oriented lists, native exports, and comparison reports.
 
-Everything in **Router**, plus:
+Everything in `simple`, plus:
 
 | File | Contents |
 |---|---|
-| `validation_report.txt` | Accuracy report comparing results against expected annotations |
+| `report.txt` | Human-readable report with routing, verdict, service, and confidence summaries |
+| `services_report.txt` | Service-grouped report with per-host details |
+| `proxy_required.txt` | Domains classified as `ProxyRequired` |
+| `direct_ok.txt` | Domains classified as `DirectOk` |
+| `manual_review.txt` | Domains classified as `ManualReview` |
+| `sing-box-rule-set.json` | sing-box source-format rule set |
+| `sing-box-route-snippet.json` | sing-box route snippet |
+| `xray-routing-rule.json` | Xray routing snippet using exact `full:` matches |
+| `openwrt-pbr-domains.txt` | OpenWrt PBR domain list |
+| `openwrt-dnsmasq-ipset.conf` | `dnsmasq-full` `ipset=` snippet |
+| `comparison_report.txt` | Local-vs-control comparison report, when `--control-proxy` is used |
+| `confirmed_proxy_required.txt` | Domains confirmed by dual-vantage comparison |
+| `control_proxy_health.txt` | Control-proxy preflight report |
+| `service_geo_report.txt` | Service-level geo summary from comparison results |
+| `strict-*` files | Strict exports based only on confirmed dual-vantage results |
+| `known-service-bundle-*` files | Minimal host bundles for known services |
+| `generic-apex-bypass-*` files | Apex-level exports for unmapped proxy-required domains |
+
+### `full`
+
+Adds validation output on top of `router`.
+
+| File | Contents |
+|---|---|
+| `validation_report.txt` | Validation report against annotated expected outcomes |
 
 ---
 
-## Export strategy
+## Export Strategy
 
-Router exports are intentionally conservative:
+Bulbascan exports are intentionally conservative.
 
-- **`sing-box`** uses exact `domain` matches — no wildcards
-- **`Xray`** uses exact `full:` matches
-- **`OpenWRT`** gets both a PBR domain list and `dnsmasq-full` `ipset=` snippets
-- **`strict-*`** variants include only dual-vantage **confirmed** domains (strongest signal)
-- **`known-service-bundle-*`** — smallest host set per service that still covers all critical roles
-- **`generic-apex-bypass-*`** — apex-level fallback for the non-profiled long tail
+- `proxy_required.txt` is the direct routing list from the local decision model
+- `confirmed_proxy_required.txt` is stricter and only exists when dual-vantage comparison runs
+- `strict-*` exports are built from confirmed comparison outcomes
+- `known-service-bundle-*` exports try to keep enough hosts to cover critical service roles
+- `generic-apex-bypass-*` exports cover the long tail of unmapped domains
+
+This means:
+
+- `proxy_required.txt` is broader
+- `strict-*` is safer
+- `known-service-bundle-*` is smaller and service-aware
 
 ---
 
-## Blocked list formats
+## Blocked List Formats
 
-Controlled by `--blocked-list-format`:
+Controlled by `--blocked-list-format`.
 
-| Format | Output example | Use case |
+| Format | Example | Use case |
 |---|---|---|
-| `plain` | `example.com` | Simple blocklists, most routers |
-| `geosite-source` | `full:example.com` | Merging into V2Ray geosite source files |
+| `plain` | `example.com` | Plain lists and generic router usage |
+| `geosite-source` | `full:example.com` | Geosite source lists and merge workflows |
 
 ---
 
-## Local state directory
+## State Directory
 
-When `--state-dir` is set, the scanner also maintains:
+When `--state-dir` is used, Bulbascan also maintains persistent state files:
 
 | File | Contents |
 |---|---|
-| `blocked.txt` | Confirmed proxy-required (persistent) |
-| `direct.txt` | Confirmed direct-ok (persistent) |
-| `manual_review.txt` | Uncertain — rescanned on the next run |
+| `blocked.txt` | Persisted blocked/proxy-required set |
+| `direct.txt` | Persisted direct-ok set |
+| `manual_review.txt` | Persisted uncertain set |
 
-Domains already in `blocked.txt` or `direct.txt` are skipped on subsequent runs unless `--refresh-known` is passed.
+These files are used to skip already-known domains on later runs unless `--refresh-known` is enabled.

@@ -53,6 +53,30 @@ cargo build --release
 
 **Requirements:** Rust 1.94+
 
+### Optional: Docker-based development
+
+If you do not want to install Rust and build dependencies directly on your system, use the provided dev container:
+
+```sh
+docker build -f Dockerfile.dev -t bulbascan-dev .
+docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo check
+docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
+docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo clippy -- -D warnings
+```
+
+Included in the dev image:
+
+- `cmake`
+- `pkg-config`
+- `clang`
+- `perl`
+- standard build tools
+
+Note:
+
+- this container is intended for build/test/dev workflows
+- real browser verification and real network-path debugging are still better tested on the host system
+
 ---
 
 ## Branch workflow

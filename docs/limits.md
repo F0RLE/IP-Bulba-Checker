@@ -1,61 +1,73 @@
 # Limits and Safety Defaults
 
-> What the scanner does well, where it can still be wrong, and how to get the most out of it.
+> What Bulbascan does well, where ambiguity still exists, and how to get the most reliable selective-proxy results.
 
 ---
 
-## Where the scanner is strong
+## Where the Scanner Is Strong
 
-- **Known services with a control proxy** — dual-vantage comparison gives the strongest geo signal.
-  When local scan returns `GeoBlocked` and the control proxy returns `Accessible`, confidence is high.
-- **Curated service profiles** — services in `profiles.toml` get role-aware aggregation.
-  "Auth is blocked even though web looks ok" is surfaced correctly.
-- **WAF detection** — the Aho-Corasick signature engine handles 60+ CDN/WAF patterns.
-  Specificity scoring filters out noisy short patterns.
+- **Dual-vantage comparison with a real external control proxy**
+  - This is the strongest source of `ProxyRequired` confidence.
+  - It is especially valuable for separating local censorship from globally dead domains.
+
+- **Known services with curated profiles**
+  - `profiles.toml` gives Bulbascan role-aware service grouping.
+  - This improves decisions like “auth blocked, web direct” or “one critical role still ambiguous”.
+
+- **Layered evidence**
+  - HTTP status, headers, redirects, body signatures, network probes, and optional browser DOM evidence are combined instead of relying on one signal.
+
+- **Conservative routing output**
+  - Bulbascan already distinguishes `ProxyRequired`, `DirectOk`, and `ManualReview`.
+  - That is safer than forcing every ambiguous domain into a proxy list.
 
 ---
 
-## Current limitations
+## Current Limitations
 
 | Area | Detail |
 |---|---|
-| **WAF vs GeoBlock** | CDN presence headers (Cloudflare, Akamai, Fastly) can score as WAF even on accessible pages. Header scoring needs a two-phase check (see roadmap). |
-| **Captcha → GeoBlocked** | A 403 + Turnstile challenge sometimes scores as `GeoBlocked` before browser verification. Browser verify usually corrects this. |
-| **Inconclusive services** | Gemini, Meta, TikTok, Strava are often `Inconclusive` in partial-block regions. Critical-role coverage is incomplete without all expected hosts returning clear verdicts. |
-| **Large mass scans** | Best treated as triage. Not every domain in a 50,000-item list will be classified perfectly. Use the control-proxy path + manual review for important domains. |
-| **No IPv6** | The scanner probes IPv4 only. Services accessible via IPv6 but not IPv4 will appear blocked. |
-| **No HTTP/3** | QUIC/HTTP3 is not probed. Some CDNs serve HTTP/3 when HTTP/2 is rate-limited or blocked. |
-| **Authenticated HTTP proxies** | Browser verification is not available on the control path when using HTTP proxies with credentials. Use SOCKS5 for full comparison coverage. |
+| **Weak control proxy** | If the control proxy is in the same country or a similarly filtered network, comparison quality drops sharply. |
+| **ConsistentBlocked ambiguity** | When both local and control paths are blocked, Bulbascan cannot always separate “globally dead” from “blocked on both paths”. |
+| **DNS manipulation visibility** | The scanner already records network evidence, but dedicated system-DNS vs DoH disagreement reporting is still missing. |
+| **Challenge-heavy services** | Captcha / WAF interstitials can still leave some domains in `ManualReview`, especially when browser confirmation is unavailable. |
+| **Incomplete service coverage** | If a service profile lacks enough critical-role hosts, service-level conclusions stay weaker than they could be. |
+| **IPv6** | The scanner is still primarily IPv4-oriented. IPv6-only accessibility can be missed. |
+| **HTTP/3 / QUIC** | QUIC is not a primary detection path yet. Some CDN behavior may differ from the HTTP/1.1 / HTTP/2 results Bulbascan sees today. |
+| **Browser proxy constraints** | Browser-backed verification depends on proxy compatibility and a usable local browser. |
 
 ---
 
-## Safety defaults (`safe` profile)
+## Safety Defaults
 
-| Setting | Value | Rationale |
+The default `safe` profile is intentionally conservative.
+
+| Setting | Safe profile behavior | Why |
 |---|---|---|
-| Concurrency | 50 | Avoids hammering targets or triggering rate limits |
-| Secondary probes | 1 | One additional path per host beyond the root |
-| Browser probes | 1 | One browser verify attempt per ambiguous host |
-| Control browser | off | Not available unless `aggressive` |
-| Retry limit | 2 | Retries transient errors (internal constant) |
+| Concurrency | lower default worker count | reduces accidental rate-limit noise |
+| Secondary probes | limited | avoids probing too many paths on uncertain hosts |
+| Browser verification | limited | keeps browser confirmation as a secondary layer |
+| Retests | limited | reduces unstable retry storms |
+| Control-browser verification | disabled in safe mode | avoids extra browser noise on comparison runs |
 
-Use `--scan-profile aggressive` only when you need deeper confirmation and are aware of the higher request volume toward target servers.
+Use `aggressive` only when deeper confirmation is more important than a quieter scan footprint.
 
 ---
 
-## Getting the most accurate results
+## How To Get The Most Accurate Results
 
-**Best setup:**
+Recommended setup:
 
-1. Supply a control proxy via SOCKS5 (ideally through local Xray with a `vless://` link)
-2. Use `--scan-profile default` or `aggressive`
-3. Enable browser verification with `--browser`
-4. Focus on curated service sets, not huge raw lists
-5. Use `--state-dir` to accumulate a confirmed local base over multiple runs
+1. Use a control proxy outside the blocked jurisdiction.
+2. Prefer `socks5` or `socks5h` for comparison work.
+3. Supply a browser binary when scanning challenge-heavy services.
+4. Use `--state-dir` on repeat runs to accumulate confirmed outcomes.
+5. Treat `ManualReview` as an intended output, not as a failure.
 
-**Interpret results as:**
+Interpret outputs like this:
 
-- `ConfirmedProxyRequired` — high confidence, safe to add to router config
-- `CandidateProxyRequired` — likely blocked, worth adding with monitoring
-- `NeedsReview` — ambiguous; run again with a control proxy before routing
-- `Inconclusive` — not enough role coverage to decide; add missing hosts to input list
+- `ConfirmedProxyRequired` — high-confidence selective-proxy candidate
+- `CandidateProxyRequired` — likely useful, but weaker than confirmed comparison
+- `DirectOk` — safe to keep direct
+- `ManualReview` / `NeedsReview` — not enough signal to auto-route confidently
+- `ConsistentBlocked` — still unresolved without better comparison context
