@@ -16,7 +16,11 @@ fn browser_stealth_profile() -> ChaserProfile {
     let builder = if cfg!(target_os = "windows") {
         ChaserProfile::windows()
     } else if cfg!(target_os = "macos") {
-        ChaserProfile::macos_arm()
+        if cfg!(target_arch = "aarch64") {
+            ChaserProfile::macos_arm()
+        } else {
+            ChaserProfile::macos_intel()
+        }
     } else {
         ChaserProfile::linux()
     };
