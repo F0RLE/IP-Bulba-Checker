@@ -81,6 +81,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 | Incremental state | Resume interrupted scans |
 | Multi-format export | `geosite.dat`, sing-box, Xray, OpenWRT PBR + dnsmasq |
 | Dynamic concurrency | `→`/`←` tier jump, `↑`/`↓` ±1 workers, `q` cancel |
+| Stable throughput metrics | 3-second moving average speed smoothing for less jumpy `/s` and ETA |
 
 ## Custom Service Profiles
 You can easily add custom API checks or service behaviors without recompiling by editing `profiles.toml`:

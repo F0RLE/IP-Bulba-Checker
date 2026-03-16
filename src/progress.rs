@@ -15,6 +15,8 @@ use unicode_width::UnicodeWidthChar;
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+const SPEED_SMOOTHING_WINDOW: Duration = Duration::from_secs(3);
+
 fn fit_to_width(s: &str, max_cols: usize) -> String {
     if max_cols == 0 {
         return String::new();
@@ -81,8 +83,7 @@ pub struct LiveBar {
     output_display: String,
     /// Terminal width from the previous render tick.
     prev_cols: Arc<AtomicUsize>,
-    speed_last_time: Mutex<Instant>,
-    speed_last_pos: AtomicU64,
+    speed_history: Mutex<Vec<(Instant, u64)>>,
     speed_value: AtomicU64,
 }
 
@@ -106,8 +107,7 @@ impl LiveBar {
             potato,
             output_display,
             prev_cols: Arc::new(AtomicUsize::new(0)),
-            speed_last_time: Mutex::new(Instant::now()),
-            speed_last_pos: AtomicU64::new(0),
+            speed_history: Mutex::new(Vec::with_capacity(32)),
             speed_value: AtomicU64::new(0),
         })
     }
@@ -177,13 +177,21 @@ impl LiveBar {
         let elapsed_str = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
 
         let mut speed = self.speed_value.load(Ordering::Relaxed);
-        if let Ok(mut last_t) = self.speed_last_time.try_lock() {
-            let dt = last_t.elapsed().as_secs();
-            if dt >= 2 {
-                let last_p = self.speed_last_pos.swap(pos, Ordering::Relaxed);
-                speed = pos.saturating_sub(last_p) / dt;
-                self.speed_value.store(speed, Ordering::Relaxed);
-                *last_t = Instant::now();
+        if let Ok(mut history) = self.speed_history.try_lock() {
+            let now = Instant::now();
+            history.push((now, pos));
+
+            let cutoff = now.checked_sub(SPEED_SMOOTHING_WINDOW).unwrap_or(now);
+            while history.len() > 2 && history[1].0 <= cutoff {
+                history.remove(0);
+            }
+
+            if let Some(&(first_t, first_pos)) = history.first() {
+                let dt = now.saturating_duration_since(first_t).as_secs_f64();
+                if dt >= 0.25 {
+                    speed = (pos.saturating_sub(first_pos) as f64 / dt).round() as u64;
+                    self.speed_value.store(speed, Ordering::Relaxed);
+                }
             }
         }
         if speed == 0 && s > 0 && s < 2 {

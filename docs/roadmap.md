@@ -17,8 +17,8 @@
 ### 🚀 Performance & Scale
 - **Concurrent Domain Ingestion:** 
     - Parallelize input file processing using `tokio::fs` and async tasks to eliminate startup latency when loading massive community lists.
-- **Moving Average Speed Smoothing:** 
-    - Implement a 3-second moving window for the progress bar to provide stable velocity metrics.
+- **Moving Average Speed Smoothing:** completed
+    - Progress bar speed now uses a 3-second moving window to provide more stable velocity and ETA metrics.
 
 ### 📡 Network & Evasion
 - **ECH (Encrypted Client Hello) Support:** 
