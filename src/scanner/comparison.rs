@@ -36,9 +36,70 @@ fn resolver_health_note(detail: Option<&str>) -> Option<&str> {
     .find(|marker| detail.contains(marker))
 }
 
+const MIN_CONFIDENT_CONTROL_DIRECT: u8 = 80;
+const MIN_CONFIDENT_CONTROL_BLOCKED: u8 = 80;
+
+fn control_supports_direct_promotion(control: &ScanResult) -> bool {
+    control.routing_decision == RoutingDecision::DirectOk
+        && control.verdict == Verdict::Accessible
+        && control.confidence >= MIN_CONFIDENT_CONTROL_DIRECT
+}
+
+fn control_non_direct_is_weak(control: &ScanResult) -> bool {
+    if control.routing_decision == RoutingDecision::DirectOk {
+        return false;
+    }
+
+    if control.confidence < MIN_CONFIDENT_CONTROL_BLOCKED {
+        return true;
+    }
+
+    if matches!(
+        control.verdict,
+        Verdict::WafBlocked
+            | Verdict::Captcha
+            | Verdict::RateLimited
+            | Verdict::UnexpectedStatus
+    ) {
+        return true;
+    }
+
+    matches!(
+        control.verdict,
+        Verdict::GeoBlocked | Verdict::NetworkBlocked | Verdict::TlsFailure | Verdict::Unreachable
+    ) && control.network_evidence.path_dns.status != ProbeStatus::Ok
+        && control.network_evidence.tcp_443.status != ProbeStatus::Ok
+        && control.network_evidence.tls_443.status != ProbeStatus::Ok
+}
+
+fn control_note(control: &ScanResult) -> Option<String> {
+    if control.routing_decision == RoutingDecision::DirectOk
+        && !control_supports_direct_promotion(control)
+    {
+        return Some(format!(
+            "control direct signal is weak: verdict={} confidence={}",
+            verdict_label(control.verdict),
+            control.confidence
+        ));
+    }
+
+    if control_non_direct_is_weak(control) {
+        return Some(format!(
+            "control path is too weak for a blocked-side comparison: verdict={} confidence={}",
+            verdict_label(control.verdict),
+            control.confidence
+        ));
+    }
+
+    None
+}
+
 pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> ComparisonResult {
+    let control_supports_direct = control_supports_direct_promotion(control);
+    let control_blocked_is_weak = control_non_direct_is_weak(control);
+
     let mut decision = if local.routing_decision == RoutingDecision::ProxyRequired
-        && control.routing_decision == RoutingDecision::DirectOk
+        && control_supports_direct
     {
         ComparisonDecision::ConfirmedProxyRequired
     } else if matches!(
@@ -50,7 +111,7 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
             | Verdict::UnexpectedStatus
             | Verdict::WafBlocked
             | Verdict::Captcha
-    ) && control.routing_decision == RoutingDecision::DirectOk
+    ) && control_supports_direct
     {
         // "Smart WAF/Captcha Promotion": If local is WAF/Captcha but control proxy is DirectOk,
         // it means the site is selectively blocking the local IP/geo, not down globally.
@@ -61,14 +122,18 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
         ComparisonDecision::ConsistentDirect
     } else if local.routing_decision != RoutingDecision::DirectOk
         && control.routing_decision != RoutingDecision::DirectOk
+        && !control_blocked_is_weak
     {
         ComparisonDecision::ConsistentBlocked
     } else {
         ComparisonDecision::NeedsReview
     };
 
-    let network_notes =
+    let mut network_notes =
         compare_network_evidence(&local.network_evidence, &control.network_evidence);
+    if let Some(note) = control_note(control) {
+        network_notes.push(note);
+    }
 
     let mut local_verdict_confidence = local.confidence;
     let mut local_routing_decision = local.routing_decision;
@@ -102,11 +167,28 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
             verdict_label(local.verdict),
             verdict_label(control.verdict)
         ),
-        ComparisonDecision::NeedsReview => format!(
-            "local route={} control route={}",
-            routing_decision_label(local.routing_decision),
-            routing_decision_label(control.routing_decision)
-        ),
+        ComparisonDecision::NeedsReview => {
+            if local.routing_decision != RoutingDecision::DirectOk
+                && control.routing_decision != RoutingDecision::DirectOk
+                && control_blocked_is_weak
+            {
+                format!(
+                    "both paths are non-direct, but control is too weak to confirm a shared blocked outcome"
+                )
+            } else if control.routing_decision == RoutingDecision::DirectOk && !control_supports_direct
+            {
+                format!(
+                    "local route={} but control direct evidence is too weak to promote confidently",
+                    routing_decision_label(local.routing_decision)
+                )
+            } else {
+                format!(
+                    "local route={} control route={}",
+                    routing_decision_label(local.routing_decision),
+                    routing_decision_label(control.routing_decision)
+                )
+            }
+        }
     };
     let reason = if network_notes.is_empty() {
         reason

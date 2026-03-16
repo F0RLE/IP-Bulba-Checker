@@ -257,6 +257,137 @@ fn both_direct_paths_are_consistent_direct() {
 }
 
 #[test]
+fn weak_control_direct_signal_stays_needs_review() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::GeoBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 95,
+        http_status: Some(451),
+        reason: "blocked".into(),
+        block_type: Some(BlockType::Geo),
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 65,
+        http_status: Some(200),
+        reason: "weak ok".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison
+        .reason
+        .contains("control direct evidence is too weak"));
+    assert!(comparison
+        .network_notes
+        .iter()
+        .any(|note| note.contains("control direct signal is weak")));
+}
+
+#[test]
+fn weak_control_blocked_signal_does_not_force_consistent_blocked() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 93,
+        http_status: None,
+        reason: "network".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::Captcha,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 92,
+        http_status: Some(403),
+        reason: "captcha".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison
+        .reason
+        .contains("control is too weak to confirm a shared blocked outcome"));
+    assert!(comparison
+        .network_notes
+        .iter()
+        .any(|note| note.contains("control path is too weak")));
+}
+
+#[test]
+fn strong_control_blocked_signal_can_stay_consistent_blocked() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::ok("203.0.113.10"),
+            path_dns: ProbeEvidence::ok("203.0.113.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::skipped("tcp/443 failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 93,
+        http_status: None,
+        reason: "network".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::ok("198.51.100.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::failed("handshake failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 90,
+        http_status: None,
+        reason: "network".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::ConsistentBlocked);
+}
+
+#[test]
 fn comparison_captures_network_notes_when_control_path_resolves() {
     let local = ScanResult {
         domain: "example.com".into(),
