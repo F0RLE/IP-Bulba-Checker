@@ -123,10 +123,18 @@ Use GitHub Releases or CI artifacts instead of building from source. That is the
 
 ### If you want to develop Bulbascan
 
-You can either:
+Recommended daily workflow:
+
+- edit code on the host system
+- run `cargo check`, `cargo test`, and `cargo clippy` either natively or through the optional dev container
+- run real browser-verification and real network-path checks on the host system
+
+You can choose either:
 
 - install Rust and build dependencies locally
 - use the provided dev container in [`Dockerfile.dev`](Dockerfile.dev)
+
+For Windows contributors, native development is the recommended default. Bulbascan's browser-confirmation and selective-proxy behavior are easier to validate on the host network stack than inside a container.
 
 Example Docker-based development flow:
 
@@ -145,7 +153,7 @@ docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo check
 
 Note:
 
-- the dev container is for build/test workflows
+- the dev container is optional and mainly useful for build/test workflows
 - real browser verification and real network-path debugging are still better tested on the host system
 
 ## Documentation

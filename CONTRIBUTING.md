@@ -53,6 +53,16 @@ cargo build --release
 
 **Requirements:** Rust 1.94+
 
+### Recommended daily workflow
+
+Use the host system as the default development environment:
+
+- edit code locally in your normal editor
+- run `cargo check`, `cargo test`, `cargo clippy -- -D warnings`, and `cargo build --release` natively unless you specifically want an isolated toolchain
+- run browser-verification and network-sensitive scans on the host system, not inside a container
+
+This project is sensitive to the real browser environment and the real network path, so native development is usually the least confusing option on Windows.
+
 ### Optional: Docker-based development
 
 If you do not want to install Rust and build dependencies directly on your system, use the provided dev container:
@@ -83,7 +93,7 @@ Included in the dev image:
 
 Note:
 
-- this container is intended for build/test/dev workflows
+- this container is optional and intended for build/test/dev workflows
 - real browser verification and real network-path debugging are still better tested on the host system
 
 ---
