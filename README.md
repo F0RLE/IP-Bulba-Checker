@@ -136,6 +136,13 @@ docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo check
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 ```
 
+Or with Docker Compose:
+
+```sh
+docker compose -f docker-compose.dev.yml build
+docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo check
+```
+
 Note:
 
 - the dev container is for build/test workflows

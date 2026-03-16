@@ -64,6 +64,15 @@ docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo test
 docker run --rm -it -v "$PWD:/workspace" -w /workspace bulbascan-dev cargo clippy -- -D warnings
 ```
 
+Or use Docker Compose:
+
+```sh
+docker compose -f docker-compose.dev.yml build
+docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo check
+docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo test
+docker compose -f docker-compose.dev.yml run --rm bulbascan-dev cargo clippy -- -D warnings
+```
+
 Included in the dev image:
 
 - `cmake`
