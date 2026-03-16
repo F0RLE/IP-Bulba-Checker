@@ -6,6 +6,7 @@ use super::analysis::{
 };
 use super::browser::browser_proxy_server_arg;
 use super::comparison::{compare_result_pair, compare_with_control, summarize_service_geo};
+use super::reports::write_human_report;
 use super::transport::{
     classify_control_proxy_error, evaluate_control_proxy_health, host_for_target,
 };
@@ -303,14 +304,112 @@ fn comparison_captures_network_notes_when_control_path_resolves() {
         comparison
             .network_notes
             .iter()
-            .any(|note| note.contains("local system DNS failed"))
+            .any(|note| note.contains("local system DNS failed") || note.contains("local DNS manipulation suspected"))
     );
     assert!(
         comparison
             .network_notes
             .iter()
-            .any(|note| note.contains("path DNS has no IP overlap"))
+            .any(|note| note.contains("DNS mismatch"))
     );
+}
+
+#[test]
+fn comparison_distinguishes_dns_manipulation_from_unhealthy_resolver() {
+    let base_control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::ok("198.51.100.20"),
+            tcp_443: ProbeEvidence::skipped("proxy mode"),
+            tls_443: ProbeEvidence::skipped("proxy mode"),
+            tcp_80: ProbeEvidence::skipped("proxy mode"),
+        },
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 85,
+        http_status: Some(200),
+        reason: "OK".into(),
+        block_type: None,
+    };
+
+    let manipulation_local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("kind=nxdomain resolver_control_ok: no such domain"),
+            path_dns: ProbeEvidence::ok("203.0.113.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::skipped("tcp/443 failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 92,
+        http_status: None,
+        reason: "dns".into(),
+        block_type: None,
+    };
+
+    let unhealthy_local = ScanResult {
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("kind=servfail resolver_control_servfail: upstream failure"),
+            ..manipulation_local.network_evidence.clone()
+        },
+        ..manipulation_local.clone()
+    };
+
+    let manipulation = compare_result_pair(&manipulation_local, &base_control);
+    assert!(manipulation
+        .network_notes
+        .iter()
+        .any(|note| note.contains("local DNS manipulation suspected")));
+
+    let unhealthy = compare_result_pair(&unhealthy_local, &base_control);
+    assert!(unhealthy
+        .network_notes
+        .iter()
+        .any(|note| note.contains("local resolver appears unhealthy")));
+}
+
+#[test]
+fn comparison_report_summarizes_dns_signal_buckets() {
+    let comparisons = vec![ComparisonResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        local_verdict: Verdict::NetworkBlocked,
+        local_routing_decision: RoutingDecision::ProxyRequired,
+        local_confidence: 92,
+        local_evidence: EvidenceBundle::default(),
+        control_verdict: Verdict::Accessible,
+        control_routing_decision: RoutingDecision::DirectOk,
+        control_evidence: EvidenceBundle::default(),
+        decision: ComparisonDecision::ConfirmedProxyRequired,
+        local_network_evidence: NetworkEvidence::default(),
+        control_network_evidence: NetworkEvidence::default(),
+        network_notes: vec![
+            "local DNS manipulation suspected: system resolver returned nxdomain while control path DNS resolved".into(),
+            "DNS mismatch confirmed by failed direct tcp/tls: local=203.0.113.10 control=198.51.100.20".into(),
+        ],
+        reason: "comparison".into(),
+    }];
+
+    let report_path = std::env::temp_dir().join("bulbascan-comparison-report-test.txt");
+    super::comparison::write_control_comparison_report(&comparisons, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("DNS signals"));
+    assert!(report.contains("dns_manipulation_suspected: 1"));
+    assert!(report.contains("dns_mismatch_confirmed: 1"));
 }
 
 #[test]

@@ -12,6 +12,30 @@ use super::types::{
 };
 use crate::service_profiles;
 
+fn dns_failure_kind(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    detail
+        .strip_prefix("kind=")
+        .and_then(|rest| rest.split_whitespace().next())
+}
+
+fn resolver_health_note(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    [
+        "resolver_control_ok",
+        "resolver_control_empty",
+        "resolver_control_timeout",
+        "resolver_control_servfail",
+        "resolver_control_nxdomain",
+        "resolver_control_nodata",
+        "resolver_control_refused",
+        "resolver_control_failed",
+        "resolver_control_unknown",
+    ]
+    .into_iter()
+    .find(|marker| detail.contains(marker))
+}
+
 pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> ComparisonResult {
     let mut decision = if local.routing_decision == RoutingDecision::ProxyRequired
         && control.routing_decision == RoutingDecision::DirectOk
@@ -113,7 +137,26 @@ fn compare_network_evidence(local: &NetworkEvidence, control: &NetworkEvidence) 
     let mut notes = Vec::new();
 
     if local.dns.status != ProbeStatus::Ok && control.path_dns.status == ProbeStatus::Ok {
-        notes.push("local system DNS failed while control path DNS resolved".to_string());
+        let dns_kind = dns_failure_kind(local.dns.detail.as_deref()).unwrap_or("failed");
+        let resolver_health = resolver_health_note(local.dns.detail.as_deref());
+        match (dns_kind, resolver_health) {
+            ("nxdomain" | "servfail" | "timeout" | "refused", Some("resolver_control_ok")) => {
+                notes.push(format!(
+                    "local DNS manipulation suspected: system resolver returned {dns_kind} while control path DNS resolved"
+                ));
+            }
+            (_, Some("resolver_control_timeout" | "resolver_control_servfail" | "resolver_control_failed")) =>
+            {
+                notes.push(format!(
+                    "local resolver appears unhealthy: target query failed with {dns_kind} and innocuous control query also failed"
+                ));
+            }
+            _ => {
+                notes.push(format!(
+                    "local system DNS failed ({dns_kind}) while control path DNS resolved"
+                ));
+            }
+        }
     }
     if local.tcp_443.status != ProbeStatus::Ok && control.path_dns.status == ProbeStatus::Ok {
         notes.push("local tcp/443 failed while control path DNS still resolved".to_string());
@@ -133,9 +176,16 @@ fn compare_network_evidence(local: &NetworkEvidence, control: &NetworkEvidence) 
             let local_preview = local.path_dns.detail.as_deref().unwrap_or_default();
             let control_preview = control.path_dns.detail.as_deref().unwrap_or_default();
             if overlap.is_empty() {
-                notes.push(format!(
-                    "path DNS has no IP overlap: local={local_preview} control={control_preview}"
-                ));
+                if local.tcp_443.status != ProbeStatus::Ok || local.tls_443.status != ProbeStatus::Ok
+                {
+                    notes.push(format!(
+                        "DNS mismatch confirmed by failed direct tcp/tls: local={local_preview} control={control_preview}"
+                    ));
+                } else {
+                    notes.push(format!(
+                        "unconfirmed DNS mismatch: local={local_preview} control={control_preview}"
+                    ));
+                }
             } else if local_path_dns != control_path_dns {
                 notes.push(format!(
                     "path DNS partially overlaps: local={local_preview} control={control_preview}"
@@ -182,10 +232,25 @@ pub fn write_control_comparison_report(
     output_path: &Path,
 ) -> anyhow::Result<()> {
     let mut counts = BTreeMap::<&str, usize>::new();
+    let mut dns_note_counts = BTreeMap::<&str, usize>::new();
     for comparison in comparisons {
         *counts
             .entry(comparison_decision_label(comparison.decision))
             .or_default() += 1;
+        for note in &comparison.network_notes {
+            let bucket = if note.contains("local DNS manipulation suspected") {
+                "dns_manipulation_suspected"
+            } else if note.contains("local resolver appears unhealthy") {
+                "resolver_unhealthy"
+            } else if note.contains("DNS mismatch confirmed by failed direct tcp/tls") {
+                "dns_mismatch_confirmed"
+            } else if note.contains("unconfirmed DNS mismatch") {
+                "dns_mismatch_unconfirmed"
+            } else {
+                continue;
+            };
+            *dns_note_counts.entry(bucket).or_default() += 1;
+        }
     }
 
     let mut report = String::new();
@@ -195,6 +260,13 @@ pub fn write_control_comparison_report(
     writeln!(&mut report, "Summary")?;
     for (decision, count) in counts {
         writeln!(&mut report, "- {decision}: {count}")?;
+    }
+    if !dns_note_counts.is_empty() {
+        writeln!(&mut report)?;
+        writeln!(&mut report, "DNS signals")?;
+        for (label, count) in dns_note_counts {
+            writeln!(&mut report, "- {label}: {count}")?;
+        }
     }
 
     let sections = [

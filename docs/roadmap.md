@@ -11,10 +11,10 @@
 
 ## Core Accuracy
 
-- **DNS-level block detection**
-  - Compare system DNS vs DoH answers to detect NXDOMAIN injection and poisoned blockpage IPs.
+- **DNS-level block detection:** completed
+  - Compare system DNS vs DoH answers to detect NXDOMAIN injection, resolver failures, and suspicious poisoned-answer mismatches.
   - Record DNS disagreement as first-class evidence in scan results and comparison reports.
-  - Distinguish "DNS manipulated locally" from "domain genuinely dead globally".
+  - Distinguish stronger cases such as "local DNS manipulation suspected", "resolver unhealthy", and "DNS mismatch confirmed by failed direct tcp/tls".
 
 - **Dual-vantage confidence improvements**
   - Tighten `ConfirmedProxyRequired` vs `CandidateProxyRequired` promotion rules.

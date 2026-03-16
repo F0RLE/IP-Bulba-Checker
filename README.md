@@ -19,9 +19,10 @@ Bulbascan scans domain lists and classifies which targets are likely safe to kee
 
 Bulbascan uses a layered detection approach:
 1. **HTTP probing:** Uses `rquest` as the primary client with a fallback request path for harder transport cases.
-2. **Dual-vantage comparison:** Compares the local path with a control proxy to separate local blocking from globally dead or ambiguous domains.
-3. **Browser confirmation:** Uses a local browser as a secondary confirmation layer for challenge-heavy and script-dependent services.
-4. **Signature engine:** Analyzes headers, bodies, redirects, and API responses with an Aho-Corasick matcher.
+2. **DNS evidence:** Compares system DNS with DoH answers to detect stronger local DNS manipulation and suspicious poisoned-answer mismatches.
+3. **Dual-vantage comparison:** Compares the local path with a control proxy to separate local blocking from globally dead or ambiguous domains.
+4. **Browser confirmation:** Uses a local browser as a secondary confirmation layer for challenge-heavy and script-dependent services.
+5. **Signature engine:** Analyzes headers, bodies, redirects, and API responses with an Aho-Corasick matcher.
 
 | Verdict | Meaning |
 |---|---|
@@ -73,6 +74,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 | Feature | Details |
 |---|---|
 | Dual-transport probing | `rquest` primary path with fallback transport handling |
+| DNS-level block detection | System DNS vs DoH comparison, resolver failure classification, and mismatch confirmation via direct TCP/TLS probes |
 | Browser verification | Local browser confirmation for challenge-heavy and script-dependent targets |
 | Signature engine | Aho-Corasick on body/header/API patterns with specificity scoring |
 | RU/BY ISP detection | Rostelecom, Beltelecom, MTS, Beeline, Megafon, TTK block pages |
