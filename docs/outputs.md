@@ -58,6 +58,11 @@ Adds validation output on top of `router`.
 |---|---|
 | `validation_report.txt` | Validation report against annotated expected outcomes |
 
+`validation_report.txt` is also the primary operator-facing place for publication guidance:
+
+- what is safe to publish now via `strict-*` exports
+- what should remain in review (`candidate_proxy_required`, `manual_review`, incomplete service bundles)
+
 ---
 
 ## Export Strategy

@@ -105,6 +105,9 @@ Near-term priorities are therefore:
     - control-path ambiguity
     - transport failure
     - weak service coverage
+  - Publication guidance in `validation_report.txt`: partially implemented
+    - strict exports are now called out as the publication-grade tier
+    - candidate / manual-review / incomplete service bundles are explicitly kept in review
   - Add publication guidance in reports:
     - what is safe for strict router exports now
     - what should stay in review until a later cycle
