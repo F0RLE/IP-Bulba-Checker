@@ -127,7 +127,13 @@ pub(crate) async fn run_browser_dom_dump(
         config_builder = config_builder.arg(format!("--proxy-server={proxy_str}"));
     }
 
-    let (mut browser, mut handler) = match Browser::launch(config_builder.build().map_err(|e| anyhow::anyhow!("config build error: {e}"))?).await {
+    let (mut browser, mut handler) = match Browser::launch(
+        config_builder
+            .build()
+            .map_err(|e| anyhow::anyhow!("config build error: {e}"))?,
+    )
+    .await
+    {
         Ok(b) => b,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&profile_dir);
@@ -135,16 +141,18 @@ pub(crate) async fn run_browser_dom_dump(
         }
     };
 
-    let handler_task: JoinHandle<()> = tokio::task::spawn(async move {
-        while let Some(_) = handler.next().await {}
-    });
+    let handler_task: JoinHandle<()> =
+        tokio::task::spawn(async move { while let Some(_) = handler.next().await {} });
 
     let page_result = async {
         let page = browser.new_page("about:blank").await?;
         let chaser = ChaserPage::new(page);
 
         // Apply the same profile across CDP, HTTP headers, and emulation settings.
-        chaser.apply_profile(&stealth_profile).await.map_err(|e| anyhow::anyhow!("failed to apply stealth profile: {e}"))?;
+        chaser
+            .apply_profile(&stealth_profile)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to apply stealth profile: {e}"))?;
         chaser
             .raw_page()
             .emulate_locale(
@@ -165,7 +173,7 @@ pub(crate) async fn run_browser_dom_dump(
 
         chaser.goto(url).await?;
         chaser.raw_page().wait_for_navigation().await?;
-        
+
         // Give it a brief moment for Cloudflare/JS to execute challenges
         tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -181,4 +189,3 @@ pub(crate) async fn run_browser_dom_dump(
 
     page_result
 }
-

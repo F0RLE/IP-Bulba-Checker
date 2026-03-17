@@ -186,11 +186,10 @@ pub(crate) fn build_fallback_client(
         .timeout(Duration::from_secs(timeout_secs));
 
     if let Some(proxy_url) = proxy {
-        builder =
-            builder
-                .proxy(rquest::Proxy::all(proxy_url).map_err(|err| {
-                    anyhow::anyhow!("invalid rquest proxy '{proxy_url}': {err}")
-                })?);
+        builder = builder.proxy(
+            rquest::Proxy::all(proxy_url)
+                .map_err(|err| anyhow::anyhow!("invalid rquest proxy '{proxy_url}': {err}"))?,
+        );
     }
 
     Ok(builder.build()?)

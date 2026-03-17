@@ -56,10 +56,7 @@ fn control_non_direct_is_weak(control: &ScanResult) -> bool {
 
     if matches!(
         control.verdict,
-        Verdict::WafBlocked
-            | Verdict::Captcha
-            | Verdict::RateLimited
-            | Verdict::UnexpectedStatus
+        Verdict::WafBlocked | Verdict::Captcha | Verdict::RateLimited | Verdict::UnexpectedStatus
     ) {
         return true;
     }
@@ -98,36 +95,35 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
     let control_supports_direct = control_supports_direct_promotion(control);
     let control_blocked_is_weak = control_non_direct_is_weak(control);
 
-    let mut decision = if local.routing_decision == RoutingDecision::ProxyRequired
-        && control_supports_direct
-    {
-        ComparisonDecision::ConfirmedProxyRequired
-    } else if matches!(
-        local.verdict,
-        Verdict::GeoBlocked
-            | Verdict::NetworkBlocked
-            | Verdict::TlsFailure
-            | Verdict::Unreachable
-            | Verdict::UnexpectedStatus
-            | Verdict::WafBlocked
-            | Verdict::Captcha
-    ) && control_supports_direct
-    {
-        // "Smart WAF/Captcha Promotion": If local is WAF/Captcha but control proxy is DirectOk,
-        // it means the site is selectively blocking the local IP/geo, not down globally.
-        ComparisonDecision::CandidateProxyRequired
-    } else if local.routing_decision == RoutingDecision::DirectOk
-        && control.routing_decision == RoutingDecision::DirectOk
-    {
-        ComparisonDecision::ConsistentDirect
-    } else if local.routing_decision != RoutingDecision::DirectOk
-        && control.routing_decision != RoutingDecision::DirectOk
-        && !control_blocked_is_weak
-    {
-        ComparisonDecision::ConsistentBlocked
-    } else {
-        ComparisonDecision::NeedsReview
-    };
+    let mut decision =
+        if local.routing_decision == RoutingDecision::ProxyRequired && control_supports_direct {
+            ComparisonDecision::ConfirmedProxyRequired
+        } else if matches!(
+            local.verdict,
+            Verdict::GeoBlocked
+                | Verdict::NetworkBlocked
+                | Verdict::TlsFailure
+                | Verdict::Unreachable
+                | Verdict::UnexpectedStatus
+                | Verdict::WafBlocked
+                | Verdict::Captcha
+        ) && control_supports_direct
+        {
+            // "Smart WAF/Captcha Promotion": If local is WAF/Captcha but control proxy is DirectOk,
+            // it means the site is selectively blocking the local IP/geo, not down globally.
+            ComparisonDecision::CandidateProxyRequired
+        } else if local.routing_decision == RoutingDecision::DirectOk
+            && control.routing_decision == RoutingDecision::DirectOk
+        {
+            ComparisonDecision::ConsistentDirect
+        } else if local.routing_decision != RoutingDecision::DirectOk
+            && control.routing_decision != RoutingDecision::DirectOk
+            && !control_blocked_is_weak
+        {
+            ComparisonDecision::ConsistentBlocked
+        } else {
+            ComparisonDecision::NeedsReview
+        };
 
     let mut network_notes =
         compare_network_evidence(&local.network_evidence, &control.network_evidence);
@@ -175,7 +171,8 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
                 format!(
                     "both paths are non-direct, but control is too weak to confirm a shared blocked outcome"
                 )
-            } else if control.routing_decision == RoutingDecision::DirectOk && !control_supports_direct
+            } else if control.routing_decision == RoutingDecision::DirectOk
+                && !control_supports_direct
             {
                 format!(
                     "local route={} but control direct evidence is too weak to promote confidently",
@@ -227,8 +224,14 @@ fn compare_network_evidence(local: &NetworkEvidence, control: &NetworkEvidence) 
                     "local DNS manipulation suspected: system resolver returned {dns_kind} while control path DNS resolved"
                 ));
             }
-            (_, Some("resolver_control_timeout" | "resolver_control_servfail" | "resolver_control_failed")) =>
-            {
+            (
+                _,
+                Some(
+                    "resolver_control_timeout"
+                    | "resolver_control_servfail"
+                    | "resolver_control_failed",
+                ),
+            ) => {
                 notes.push(format!(
                     "local resolver appears unhealthy: target query failed with {dns_kind} and innocuous control query also failed"
                 ));
@@ -258,7 +261,8 @@ fn compare_network_evidence(local: &NetworkEvidence, control: &NetworkEvidence) 
             let local_preview = local.path_dns.detail.as_deref().unwrap_or_default();
             let control_preview = control.path_dns.detail.as_deref().unwrap_or_default();
             if overlap.is_empty() {
-                if local.tcp_443.status != ProbeStatus::Ok || local.tls_443.status != ProbeStatus::Ok
+                if local.tcp_443.status != ProbeStatus::Ok
+                    || local.tls_443.status != ProbeStatus::Ok
                 {
                     notes.push(format!(
                         "DNS mismatch confirmed by failed direct tcp/tls: local={local_preview} control={control_preview}"

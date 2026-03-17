@@ -22,9 +22,8 @@ mod transport;
 pub(crate) mod types;
 use analysis::{
     analyze_http_observation, apply_dns_evidence_adjustment, classify_browser_html,
-    classify_transport_error,
-    relax_infra_root_result, same_measurement, should_try_retest, stabilize_scan_attempts,
-    status_from_verdict, verdict_rank,
+    classify_transport_error, relax_infra_root_result, same_measurement, should_try_retest,
+    stabilize_scan_attempts, status_from_verdict, verdict_rank,
 };
 use browser::{
     browser_proxy_server_arg, detect_browser_binary, run_browser_dom_dump,
@@ -35,7 +34,10 @@ pub(crate) use comparison::{
     write_control_comparison_report, write_control_proxy_health, write_service_geo_report,
 };
 use network::collect_network_evidence;
-pub(crate) use reports::{write_human_report, write_routing_lists, write_service_report};
+pub(crate) use reports::{
+    write_human_report, write_manual_review_hotspot_report, write_routing_lists,
+    write_service_report,
+};
 use transport::{build_request, send_via_rquest, send_with_retries};
 pub(crate) use transport::{preflight_control_proxy, should_run_control_comparison};
 #[allow(unused_imports)]

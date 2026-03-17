@@ -193,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
     let geosite_path = args.results_dir.join(&args.geosite);
     let report_path = args.results_dir.join("report.txt");
     let services_report_path = args.results_dir.join("services_report.txt");
+    let manual_review_hotspots_path = args.results_dir.join("manual_review_hotspots.txt");
     let proxy_required_path = args.results_dir.join("proxy_required.txt");
     let direct_ok_path = args.results_dir.join("direct_ok.txt");
     let manual_review_path = args.results_dir.join("manual_review.txt");
@@ -527,6 +528,18 @@ async fn main() -> anyhow::Result<()> {
             ),
             Err(e) => eprintln!("Error writing service report: {e}"),
         }
+        match scanner::write_manual_review_hotspot_report(
+            &scan_results,
+            None,
+            None,
+            &manual_review_hotspots_path,
+        ) {
+            Ok(()) => println!(
+                "Manual review hotspot report saved to {}.",
+                manual_review_hotspots_path.display()
+            ),
+            Err(e) => eprintln!("Error writing manual review hotspot report: {e}"),
+        }
         match scanner::write_routing_lists(&scan_results, &args.results_dir) {
             Ok(()) => {
                 println!(
@@ -738,6 +751,18 @@ async fn main() -> anyhow::Result<()> {
                         service_geo_report_path.display()
                     ),
                     Err(e) => eprintln!("Error writing service geo report: {e}"),
+                }
+                match scanner::write_manual_review_hotspot_report(
+                    &scan_results,
+                    Some(&comparisons),
+                    Some(&service_geo),
+                    &manual_review_hotspots_path,
+                ) {
+                    Ok(()) => println!(
+                        "Manual review hotspot report refreshed at {}.",
+                        manual_review_hotspots_path.display()
+                    ),
+                    Err(e) => eprintln!("Error refreshing manual review hotspot report: {e}"),
                 }
                 match router_exports::write_strict_router_exports(&comparisons, &args.results_dir) {
                     Ok(paths) => println!(
