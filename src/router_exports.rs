@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::Serialize;
 
@@ -13,25 +14,35 @@ use crate::service_profiles;
 const SING_BOX_RULE_SET_VERSION: u8 = 4;
 const SING_BOX_TAG: &str = "bulba-proxy-required";
 const SING_BOX_RULE_SET_FILE: &str = "sing-box-rule-set.json";
+const SING_BOX_BINARY_RULE_SET_FILE: &str = "sing-box-rule-set.srs";
 const SING_BOX_ROUTE_FILE: &str = "sing-box-route-snippet.json";
+const SING_BOX_BINARY_ROUTE_FILE: &str = "sing-box-binary-route-snippet.json";
 const XRAY_ROUTE_FILE: &str = "xray-routing-rule.json";
 const OPENWRT_PBR_FILE: &str = "openwrt-pbr-domains.txt";
 const OPENWRT_DNSMASQ_IPSET_FILE: &str = "openwrt-dnsmasq-ipset.conf";
 const STRICT_SING_BOX_TAG: &str = "bulba-confirmed-proxy-required";
 const STRICT_SING_BOX_RULE_SET_FILE: &str = "strict-sing-box-rule-set.json";
+const STRICT_SING_BOX_BINARY_RULE_SET_FILE: &str = "strict-sing-box-rule-set.srs";
 const STRICT_SING_BOX_ROUTE_FILE: &str = "strict-sing-box-route-snippet.json";
+const STRICT_SING_BOX_BINARY_ROUTE_FILE: &str = "strict-sing-box-binary-route-snippet.json";
 const STRICT_XRAY_ROUTE_FILE: &str = "strict-xray-routing-rule.json";
 const STRICT_OPENWRT_PBR_FILE: &str = "strict-openwrt-pbr-domains.txt";
 const STRICT_OPENWRT_DNSMASQ_IPSET_FILE: &str = "strict-openwrt-dnsmasq-ipset.conf";
 const SERVICE_BUNDLE_SING_BOX_TAG: &str = "bulba-known-service-bundles";
 const SERVICE_BUNDLE_SING_BOX_RULE_SET_FILE: &str = "known-service-bundle-rule-set.json";
+const SERVICE_BUNDLE_SING_BOX_BINARY_RULE_SET_FILE: &str = "known-service-bundle-rule-set.srs";
 const SERVICE_BUNDLE_SING_BOX_ROUTE_FILE: &str = "known-service-bundle-route-snippet.json";
+const SERVICE_BUNDLE_SING_BOX_BINARY_ROUTE_FILE: &str =
+    "known-service-bundle-binary-route-snippet.json";
 const SERVICE_BUNDLE_XRAY_ROUTE_FILE: &str = "known-service-bundle-xray-routing-rule.json";
 const SERVICE_BUNDLE_OPENWRT_PBR_FILE: &str = "known-service-bundle-openwrt-pbr-domains.txt";
 const SERVICE_BUNDLE_OPENWRT_DNSMASQ_FILE: &str = "known-service-bundle-dnsmasq-ipset.conf";
 const GENERIC_APEX_SING_BOX_TAG: &str = "bulba-generic-apex-bypass";
 const GENERIC_APEX_SING_BOX_RULE_SET_FILE: &str = "generic-apex-bypass-rule-set.json";
+const GENERIC_APEX_SING_BOX_BINARY_RULE_SET_FILE: &str = "generic-apex-bypass-rule-set.srs";
 const GENERIC_APEX_SING_BOX_ROUTE_FILE: &str = "generic-apex-bypass-route-snippet.json";
+const GENERIC_APEX_SING_BOX_BINARY_ROUTE_FILE: &str =
+    "generic-apex-bypass-binary-route-snippet.json";
 const GENERIC_APEX_XRAY_ROUTE_FILE: &str = "generic-apex-bypass-xray-routing-rule.json";
 const GENERIC_APEX_OPENWRT_PBR_FILE: &str = "generic-apex-bypass-domains.txt";
 const GENERIC_APEX_OPENWRT_DNSMASQ_FILE: &str = "generic-apex-bypass-dnsmasq-ipset.conf";
@@ -102,7 +113,9 @@ struct XrayRule {
 struct RouterExportSpec<'a> {
     sing_box_tag: &'a str,
     sing_box_rule_set_file: &'a str,
+    sing_box_binary_rule_set_file: &'a str,
     sing_box_route_file: &'a str,
+    sing_box_binary_route_file: &'a str,
     xray_route_file: &'a str,
     openwrt_pbr_file: &'a str,
     openwrt_dnsmasq_file: &'a str,
@@ -120,7 +133,9 @@ pub fn write_router_exports(
         RouterExportSpec {
             sing_box_tag: SING_BOX_TAG,
             sing_box_rule_set_file: SING_BOX_RULE_SET_FILE,
+            sing_box_binary_rule_set_file: SING_BOX_BINARY_RULE_SET_FILE,
             sing_box_route_file: SING_BOX_ROUTE_FILE,
+            sing_box_binary_route_file: SING_BOX_BINARY_ROUTE_FILE,
             xray_route_file: XRAY_ROUTE_FILE,
             openwrt_pbr_file: OPENWRT_PBR_FILE,
             openwrt_dnsmasq_file: OPENWRT_DNSMASQ_IPSET_FILE,
@@ -140,7 +155,9 @@ pub fn write_strict_router_exports(
         RouterExportSpec {
             sing_box_tag: STRICT_SING_BOX_TAG,
             sing_box_rule_set_file: STRICT_SING_BOX_RULE_SET_FILE,
+            sing_box_binary_rule_set_file: STRICT_SING_BOX_BINARY_RULE_SET_FILE,
             sing_box_route_file: STRICT_SING_BOX_ROUTE_FILE,
+            sing_box_binary_route_file: STRICT_SING_BOX_BINARY_ROUTE_FILE,
             xray_route_file: STRICT_XRAY_ROUTE_FILE,
             openwrt_pbr_file: STRICT_OPENWRT_PBR_FILE,
             openwrt_dnsmasq_file: STRICT_OPENWRT_DNSMASQ_IPSET_FILE,
@@ -160,7 +177,9 @@ pub fn write_generic_apex_exports(
         RouterExportSpec {
             sing_box_tag: GENERIC_APEX_SING_BOX_TAG,
             sing_box_rule_set_file: GENERIC_APEX_SING_BOX_RULE_SET_FILE,
+            sing_box_binary_rule_set_file: GENERIC_APEX_SING_BOX_BINARY_RULE_SET_FILE,
             sing_box_route_file: GENERIC_APEX_SING_BOX_ROUTE_FILE,
+            sing_box_binary_route_file: GENERIC_APEX_SING_BOX_BINARY_ROUTE_FILE,
             xray_route_file: GENERIC_APEX_XRAY_ROUTE_FILE,
             openwrt_pbr_file: GENERIC_APEX_OPENWRT_PBR_FILE,
             openwrt_dnsmasq_file: GENERIC_APEX_OPENWRT_DNSMASQ_FILE,
@@ -183,7 +202,9 @@ pub fn write_split_router_exports(
         RouterExportSpec {
             sing_box_tag: SERVICE_BUNDLE_SING_BOX_TAG,
             sing_box_rule_set_file: SERVICE_BUNDLE_SING_BOX_RULE_SET_FILE,
+            sing_box_binary_rule_set_file: SERVICE_BUNDLE_SING_BOX_BINARY_RULE_SET_FILE,
             sing_box_route_file: SERVICE_BUNDLE_SING_BOX_ROUTE_FILE,
+            sing_box_binary_route_file: SERVICE_BUNDLE_SING_BOX_BINARY_ROUTE_FILE,
             xray_route_file: SERVICE_BUNDLE_XRAY_ROUTE_FILE,
             openwrt_pbr_file: SERVICE_BUNDLE_OPENWRT_PBR_FILE,
             openwrt_dnsmasq_file: SERVICE_BUNDLE_OPENWRT_DNSMASQ_FILE,
@@ -198,7 +219,9 @@ pub fn write_split_router_exports(
         RouterExportSpec {
             sing_box_tag: GENERIC_APEX_SING_BOX_TAG,
             sing_box_rule_set_file: GENERIC_APEX_SING_BOX_RULE_SET_FILE,
+            sing_box_binary_rule_set_file: GENERIC_APEX_SING_BOX_BINARY_RULE_SET_FILE,
             sing_box_route_file: GENERIC_APEX_SING_BOX_ROUTE_FILE,
+            sing_box_binary_route_file: GENERIC_APEX_SING_BOX_BINARY_ROUTE_FILE,
             xray_route_file: GENERIC_APEX_XRAY_ROUTE_FILE,
             openwrt_pbr_file: GENERIC_APEX_OPENWRT_PBR_FILE,
             openwrt_dnsmasq_file: GENERIC_APEX_OPENWRT_DNSMASQ_FILE,
@@ -381,7 +404,9 @@ fn write_router_exports_for_domains(
     spec: RouterExportSpec<'_>,
 ) -> anyhow::Result<Vec<String>> {
     let sing_box_rule_set_path = output_dir.join(spec.sing_box_rule_set_file);
+    let sing_box_binary_rule_set_path = output_dir.join(spec.sing_box_binary_rule_set_file);
     let sing_box_route_path = output_dir.join(spec.sing_box_route_file);
+    let sing_box_binary_route_path = output_dir.join(spec.sing_box_binary_route_file);
     let xray_route_path = output_dir.join(spec.xray_route_file);
     let openwrt_pbr_path = output_dir.join(spec.openwrt_pbr_file);
     let openwrt_dnsmasq_path = output_dir.join(spec.openwrt_dnsmasq_file);
@@ -391,18 +416,38 @@ fn write_router_exports_for_domains(
         &sing_box_rule_set_path,
         &sing_box_route_path,
         spec.sing_box_tag,
+        "source",
     )?;
+    let binary_written = maybe_compile_sing_box_binary_rule_set(
+        &sing_box_rule_set_path,
+        &sing_box_binary_rule_set_path,
+    )?;
+    if binary_written {
+        write_sing_box_route_snippet(
+            &sing_box_binary_rule_set_path,
+            &sing_box_binary_route_path,
+            spec.sing_box_tag,
+            "binary",
+        )?;
+    } else if sing_box_binary_rule_set_path.exists() {
+        let _ = std::fs::remove_file(&sing_box_binary_rule_set_path);
+    }
     write_xray_route_snippet(domains, &xray_route_path, spec.xray_rule_tag)?;
     write_openwrt_pbr_domains(domains, &openwrt_pbr_path)?;
     write_openwrt_dnsmasq_ipset(domains, &openwrt_dnsmasq_path)?;
 
-    Ok(vec![
+    let mut written = vec![
         sing_box_rule_set_path.display().to_string(),
         sing_box_route_path.display().to_string(),
         xray_route_path.display().to_string(),
         openwrt_pbr_path.display().to_string(),
         openwrt_dnsmasq_path.display().to_string(),
-    ])
+    ];
+    if binary_written {
+        written.push(sing_box_binary_rule_set_path.display().to_string());
+        written.push(sing_box_binary_route_path.display().to_string());
+    }
+    Ok(written)
 }
 
 fn write_sing_box_rule_set(domains: &[String], output_path: &Path) -> anyhow::Result<()> {
@@ -425,6 +470,7 @@ fn write_sing_box_route_snippet(
     rule_set_path: &Path,
     output_path: &Path,
     rule_set_tag: &str,
+    format: &str,
 ) -> anyhow::Result<()> {
     let rule_set_filename = rule_set_path.file_name().map_or_else(
         || SING_BOX_RULE_SET_FILE.to_string(),
@@ -435,7 +481,7 @@ fn write_sing_box_route_snippet(
             rule_set: vec![SingBoxRuleSetRef {
                 tag: rule_set_tag.to_string(),
                 kind: "local".to_string(),
-                format: "source".to_string(),
+                format: format.to_string(),
                 path: rule_set_filename,
             }],
             rules: vec![SingBoxRouteRule {
@@ -447,6 +493,59 @@ fn write_sing_box_route_snippet(
     };
     std::fs::write(output_path, serde_json::to_vec_pretty(&payload)?)?;
     Ok(())
+}
+
+fn maybe_compile_sing_box_binary_rule_set(
+    source_path: &Path,
+    output_path: &Path,
+) -> anyhow::Result<bool> {
+    let Some(binary) = find_sing_box_binary() else {
+        return Ok(false);
+    };
+
+    let status = Command::new(binary)
+        .arg("rule-set")
+        .arg("compile")
+        .arg(source_path)
+        .arg("-o")
+        .arg(output_path)
+        .status()?;
+
+    if status.success() {
+        Ok(true)
+    } else {
+        if output_path.exists() {
+            let _ = std::fs::remove_file(output_path);
+        }
+        Ok(false)
+    }
+}
+
+fn find_sing_box_binary() -> Option<PathBuf> {
+    for candidate in [
+        std::env::var_os("BULBASCAN_SING_BOX"),
+        std::env::var_os("SING_BOX"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let path = PathBuf::from(candidate);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        for name in ["sing-box", "sing-box.exe"] {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
 }
 
 fn write_xray_route_snippet(
@@ -501,8 +600,8 @@ fn write_openwrt_dnsmasq_ipset(domains: &[String], output_path: &Path) -> anyhow
 #[cfg(test)]
 mod tests {
     use super::{
-        write_generic_apex_exports, write_router_exports, write_split_router_exports,
-        write_strict_router_exports,
+        write_generic_apex_exports, write_router_exports, write_sing_box_route_snippet,
+        write_split_router_exports, write_strict_router_exports,
     };
     use crate::scanner::types::{
         ComparisonDecision, ComparisonResult, EvidenceBundle, NetworkEvidence, ServiceGeoDecision,
@@ -571,6 +670,26 @@ mod tests {
         let dnsmasq = std::fs::read_to_string(dir.join("openwrt-dnsmasq-ipset.conf")).unwrap();
         assert!(dnsmasq.contains("ipset=/claude.ai/bulba_proxy"));
         assert!(!dnsmasq.contains("direct.example"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writes_binary_sing_box_route_snippet_when_requested() {
+        let dir =
+            std::env::temp_dir().join(format!("bulba-binary-route-snippet-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let rule_set_path = dir.join("test-rule-set.srs");
+        std::fs::write(&rule_set_path, b"test").unwrap();
+        let route_path = dir.join("test-route.json");
+
+        write_sing_box_route_snippet(&rule_set_path, &route_path, "bulba-test", "binary").unwrap();
+
+        let route = std::fs::read_to_string(&route_path).unwrap();
+        assert!(route.contains("\"format\": \"binary\""));
+        assert!(route.contains("\"path\": \"test-rule-set.srs\""));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

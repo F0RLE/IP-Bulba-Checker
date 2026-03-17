@@ -69,8 +69,9 @@
 ## Output & Export Formats
 
 - **Direct `.srs` (sing-box Rule Set v4) Compilation**
-  - Status: in progress
+  - Status: completed
   - Generate binary sing-box rule sets directly for lower-memory router deployments.
+  - Current scope: Bulbascan now writes `.srs` rule sets and matching binary route snippets when a local `sing-box` CLI is available, while keeping source-format JSON rule sets as the portable baseline output.
 
 - **Mihomo Rule-Set (`.mrs`) Export**
   - Status: in progress

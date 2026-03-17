@@ -38,7 +38,9 @@ Everything in `simple`, plus:
 | `direct_ok.txt` | Domains classified as `DirectOk` |
 | `manual_review.txt` | Domains classified as `ManualReview` |
 | `sing-box-rule-set.json` | sing-box source-format rule set |
-| `sing-box-route-snippet.json` | sing-box route snippet |
+| `sing-box-rule-set.srs` | sing-box binary rule set when `sing-box` CLI is available locally |
+| `sing-box-route-snippet.json` | sing-box route snippet for source-format rule set |
+| `sing-box-binary-route-snippet.json` | sing-box route snippet for binary `.srs` rule set when compiled |
 | `xray-routing-rule.json` | Xray routing snippet using exact `full:` matches |
 | `openwrt-pbr-domains.txt` | OpenWrt PBR domain list |
 | `openwrt-dnsmasq-ipset.conf` | `dnsmasq-full` `ipset=` snippet |
@@ -49,7 +51,7 @@ Everything in `simple`, plus:
 | `publication_report.txt` | Publication-tier and hot/warm/cold rescan guidance for the current run |
 | `publish-*.txt` files | Tiered publication outputs: strict, review-only, direct-only |
 | `rescan-*.txt` files | Hot/warm/cold refresh queues for later incremental cycles |
-| `strict-*` files | Strict exports based only on confirmed dual-vantage results |
+| `strict-*` files | Strict exports based only on confirmed dual-vantage results, including optional `.srs` outputs when `sing-box` is available |
 | `known-service-bundle-*` files | Minimal host bundles for known services |
 | `generic-apex-bypass-*` files | Apex-level exports for unmapped proxy-required domains |
 
