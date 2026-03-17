@@ -9,23 +9,6 @@
 > Bulbascan is not trying to become a full browser-bypass platform. The priority is reliable classification:
 > `DirectOk` vs `ProxyRequired` vs `ManualReview`, with fewer false positives from WAFs, captchas, DNS poisoning, and transport-level censorship.
 
-### Scan Follow-up Plan
-
-The latest large RU-blocked scan exposed a few concrete bottlenecks:
-
-- `ManualReview` is still too high on bulk runs.
-- `ConfirmedProxyRequired` is useful, but the strict list is still much smaller than the ambiguous set.
-- Captcha / challenge-heavy hosts dominate `ManualReview`.
-- Service-level geo summaries are still thin because critical-role coverage is incomplete.
-- A non-trivial number of comparison rows still come from weak or noisy transport outcomes.
-
-Near-term priorities are therefore:
-
-1. Reduce challenge-heavy `ManualReview` pressure without turning browser verification into the primary detector.
-2. Tighten comparison quality so weak control-path or worker-noise cases stop polluting dual-vantage output.
-3. Expand service-profile critical-role coverage for the small set of services that matter operationally.
-4. Keep strict exports as the default publication-grade artifact until the broad local routing list becomes less noisy.
-
 ## Core Accuracy
 
 - **DNS-level block detection**
