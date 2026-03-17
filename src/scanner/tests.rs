@@ -6,7 +6,7 @@ use super::analysis::{
 };
 use super::browser::browser_proxy_server_arg;
 use super::comparison::{compare_result_pair, compare_with_control, summarize_service_geo};
-use super::reports::write_human_report;
+use super::reports::{write_human_report, write_manual_review_hotspot_report};
 use super::transport::{
     classify_control_proxy_error, evaluate_control_proxy_health, host_for_target,
 };
@@ -176,6 +176,123 @@ fn evidence_summary_formats_human_readable_context() {
     assert!(summary.contains("src=browser_dom"));
     assert!(summary.contains("path=/login"));
     assert!(summary.contains("title=App unavailable in region"));
+}
+
+#[test]
+fn human_report_includes_manual_review_hotspot_summary() {
+    let results = vec![
+        ScanResult {
+            domain: "challenge.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle {
+                source: Some("browser_dom".into()),
+                path: Some("/".into()),
+                final_url: None,
+                title: Some("Just a moment".into()),
+                signal: Some("Browser DOM: challenge page".into()),
+            },
+            network_evidence: NetworkEvidence::default(),
+            status: DomainStatus::Blocked,
+            verdict: Verdict::WafBlocked,
+            routing_decision: RoutingDecision::ManualReview,
+            confidence: 97,
+            http_status: Some(403),
+            reason: "Browser /: Browser DOM: challenge page".into(),
+            block_type: Some(BlockType::Waf),
+        },
+        ScanResult {
+            domain: "ok.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle::default(),
+            network_evidence: NetworkEvidence::default(),
+            status: DomainStatus::Ok,
+            verdict: Verdict::Accessible,
+            routing_decision: RoutingDecision::DirectOk,
+            confidence: 85,
+            http_status: Some(200),
+            reason: "OK".into(),
+            block_type: None,
+        },
+    ];
+
+    let report_path = std::env::temp_dir().join("bulbascan-human-report-hotspots-test.txt");
+    write_human_report(&results, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("Manual Review hotspots"));
+    assert!(report.contains("captcha_or_challenge: 1"));
+}
+
+#[test]
+fn manual_review_hotspot_report_distinguishes_control_ambiguity_and_transport_noise() {
+    let results = vec![
+        ScanResult {
+            domain: "weak-control.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle::default(),
+            network_evidence: NetworkEvidence::default(),
+            status: DomainStatus::Blocked,
+            verdict: Verdict::GeoBlocked,
+            routing_decision: RoutingDecision::ManualReview,
+            confidence: 78,
+            http_status: Some(451),
+            reason: "geo blocked".into(),
+            block_type: Some(BlockType::Geo),
+        },
+        ScanResult {
+            domain: "worker-error.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle {
+                source: Some("scanner".into()),
+                path: Some("/".into()),
+                final_url: None,
+                title: None,
+                signal: Some("worker error".into()),
+            },
+            network_evidence: NetworkEvidence {
+                dns: ProbeEvidence::failed("lookup failed"),
+                ..NetworkEvidence::default()
+            },
+            status: DomainStatus::Dead,
+            verdict: Verdict::Unreachable,
+            routing_decision: RoutingDecision::ManualReview,
+            confidence: 40,
+            http_status: None,
+            reason: "Error: worker error".into(),
+            block_type: None,
+        },
+    ];
+
+    let comparisons = vec![ComparisonResult {
+        domain: "weak-control.example".into(),
+        service: None,
+        service_role: None,
+        local_verdict: Verdict::GeoBlocked,
+        local_routing_decision: RoutingDecision::ManualReview,
+        local_confidence: 78,
+        local_evidence: EvidenceBundle::default(),
+        control_verdict: Verdict::Accessible,
+        control_routing_decision: RoutingDecision::DirectOk,
+        control_evidence: EvidenceBundle::default(),
+        decision: ComparisonDecision::NeedsReview,
+        local_network_evidence: NetworkEvidence::default(),
+        control_network_evidence: NetworkEvidence::default(),
+        network_notes: vec!["control direct signal is weak: verdict=accessible confidence=65".into()],
+        reason: "local route=manual_review but control direct evidence is too weak to promote confidently".into(),
+    }];
+
+    let report_path = std::env::temp_dir().join("bulbascan-manual-review-hotspots-test.txt");
+    write_manual_review_hotspot_report(&results, Some(&comparisons), None, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("control_path_ambiguity: 1"));
+    assert!(report.contains("transport_failure: 1"));
 }
 
 #[test]
