@@ -49,6 +49,7 @@ Near-term priorities are therefore:
   - Improve challenge-page labeling so captchas and WAF interstitials produce cleaner `ManualReview` vs `ProxyRequired` outcomes.
   - Add a browser budget for bulk runs so large scans do not spend disproportionate time on long-tail challenge pages.
   - Prefer challenge-family clustering over repeated browser confirmation for obviously similar host fleets.
+  - Current status: partially implemented; bulk runs now cap total browser confirmations and per-domain browser paths, but challenge-family clustering is still pending.
 
 - **Service-profile coverage**
   - Expand `profiles.toml` so major blocked services expose enough critical-role coverage for reliable service-level decisions.

@@ -127,6 +127,7 @@ pub async fn run_scan(
             .map(PathBuf::from)
             .or_else(detect_browser_binary),
     );
+    let browser_budget = Arc::new(AtomicUsize::new(scan_policy.max_browser_verifications));
     let proxies = Arc::new(proxies);
     let matcher = Arc::new(signatures::BlockMatcher::new(signatures_file.as_deref())?);
     let proxy_index = Arc::new(AtomicUsize::new(0));
@@ -270,6 +271,7 @@ pub async fn run_scan(
         let fallback_client = fallback_client.clone();
         let tls_connector = tls_connector.clone();
         let browser_binary = browser_binary.clone();
+        let browser_budget = browser_budget.clone();
         let logger_tx = logger_tx.clone();
         let work_rx = work_rx.clone();
         let proxies = proxies.clone();
@@ -309,6 +311,7 @@ pub async fn run_scan(
                                     &fallback_client,
                                     &tls_connector,
                                     browser_binary.as_deref(),
+                                    browser_budget.clone(),
                                     domain.clone(),
                                     &matcher,
                                     proxy.as_ref(),
@@ -587,6 +590,7 @@ async fn scan_domain_once(
     fallback_client: &Client,
     tls_connector: &RustlsTlsConnector,
     browser_binary: Option<&Path>,
+    browser_budget: Arc<AtomicUsize>,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -656,6 +660,11 @@ async fn scan_domain_once(
                 && proxy
                     .and_then(|proxy| browser_proxy_server_arg(proxy))
                     .is_some()))
+        && browser_budget
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
     {
         for path in probe_paths_for_domain(&domain)
             .iter()
@@ -705,6 +714,7 @@ async fn scan_domain(
     fallback_client: &Client,
     tls_connector: &RustlsTlsConnector,
     browser_binary: Option<&Path>,
+    browser_budget: Arc<AtomicUsize>,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -720,6 +730,7 @@ async fn scan_domain(
             fallback_client,
             tls_connector,
             browser_binary,
+            browser_budget.clone(),
             domain.clone(),
             matcher,
             proxy,
@@ -761,6 +772,7 @@ async fn scan_domain(
                 fallback_client,
                 tls_connector,
                 browser_binary,
+                browser_budget.clone(),
                 domain.clone(),
                 matcher,
                 proxy,
