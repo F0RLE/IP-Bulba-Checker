@@ -9,6 +9,7 @@ Thank you for considering a contribution. This document explains how the project
 - Check the [roadmap](docs/roadmap.md) — the planned and known-issue sections are the best places to look for impactful work.
 - Search existing issues before opening a new one.
 - For large changes, open an issue first to discuss the approach.
+- Project roles and ownership are described in [GOVERNANCE.md](GOVERNANCE.md).
 
 ---
 

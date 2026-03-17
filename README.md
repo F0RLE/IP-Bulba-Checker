@@ -122,6 +122,7 @@ cargo test
 
 - If you just want to use Bulbascan, prefer GitHub Releases or CI artifacts instead of building from source.
 - If you want to contribute, use [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, development setup, and branch rules.
+- Project roles and ownership are described in [GOVERNANCE.md](GOVERNANCE.md).
 - Optional dev-container files live in [`dev/`](dev).
 
 ## Documentation
@@ -144,3 +145,4 @@ Bulbascan uses a dual-licensing model:
 
 - Open-source use: [AGPL-3.0](LICENSE)
 - Commercial / OEM licensing: [Commercial Licensing](COMMERCIAL-LICENSE.md)
+- Project roles and owner-led governance: [GOVERNANCE.md](GOVERNANCE.md)
