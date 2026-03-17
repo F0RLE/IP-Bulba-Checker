@@ -6,7 +6,7 @@
   <p align="center">
     <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.94%2B-orange?logo=rust&logoColor=white" alt="Rust"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-red.svg" alt="License: AGPL-3.0"></a>
-    <a href="COMMERCIAL-LICENSE.md"><img src="https://img.shields.io/badge/commercial-license_available-blue.svg" alt="Commercial license available"></a>
+    <a href="docs/project/COMMERCIAL-LICENSE.md"><img src="https://img.shields.io/badge/commercial-license_available-blue.svg" alt="Commercial license available"></a>
     <a href="https://github.com/F0RLE/Bulbascan/actions"><img src="https://img.shields.io/github/actions/workflow/status/F0RLE/Bulbascan/ci.yml?label=CI&logo=github" alt="CI"></a>
     <a href="https://github.com/F0RLE/Bulbascan/releases"><img src="https://img.shields.io/github/v/release/F0RLE/Bulbascan?include_prereleases&label=release" alt="Release"></a>
   </p>
@@ -79,7 +79,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 | Browser verification | Local browser confirmation for challenge-heavy and script-dependent targets |
 | Signature engine | Aho-Corasick on body/header/API patterns with specificity scoring |
 | RU/BY ISP detection | Rostelecom, Beltelecom, MTS, Beeline, Megafon, TTK block pages |
-| 27 service profiles | Editable via `profiles.toml` — no recompilation |
+| 37 service profiles | Editable via `profiles.toml` — no recompilation |
 | Control-proxy comparison | Dual-vantage: local vs proxy → highest-confidence geo detection |
 | Incremental state | Resume interrupted scans |
 | Multi-format export | `geosite.dat`, sing-box, Xray, OpenWRT PBR + dnsmasq |
@@ -121,7 +121,8 @@ cargo test
 ## Development Notes
 
 - If you just want to use Bulbascan, prefer GitHub Releases or CI artifacts instead of building from source.
-- If you want to contribute, use [CONTRIBUTING.md](CONTRIBUTING.md) for workflow, development setup, and branch rules.
+- If you want to contribute, use [docs/project/CONTRIBUTING.md](docs/project/CONTRIBUTING.md) for workflow, development setup, and branch rules.
+- Project roles and ownership are described in [docs/project/GOVERNANCE.md](docs/project/GOVERNANCE.md).
 - Optional dev-container files live in [`dev/`](dev).
 
 ## Documentation
@@ -143,4 +144,5 @@ Built with AI-assisted tooling (Antigravity, Claude, and similar agentic coding 
 Bulbascan uses a dual-licensing model:
 
 - Open-source use: [AGPL-3.0](LICENSE)
-- Commercial / OEM licensing: [Commercial Licensing](COMMERCIAL-LICENSE.md)
+- Commercial / OEM licensing: [Commercial Licensing](docs/project/COMMERCIAL-LICENSE.md)
+- Project roles and owner-led governance: [docs/project/GOVERNANCE.md](docs/project/GOVERNANCE.md)

@@ -6,9 +6,10 @@ Thank you for considering a contribution. This document explains how the project
 
 ## Before you start
 
-- Check the [roadmap](docs/roadmap.md) — the planned and known-issue sections are the best places to look for impactful work.
+- Check the [roadmap](../roadmap.md) — the current and in-progress sections are the best places to look for impactful work.
 - Search existing issues before opening a new one.
 - For large changes, open an issue first to discuss the approach.
+- Project roles and ownership are described in [GOVERNANCE.md](GOVERNANCE.md).
 
 ---
 
@@ -207,16 +208,3 @@ When reporting a detection bug (wrong verdict for a domain):
 2. Specify whether you used a control proxy and what kind
 3. If possible, run with `--verbose` and paste the relevant evidence lines
 4. Mention your region / ISP if relevant — the same domain can behave differently by location
-
----
-
-## License
-
-By contributing, you agree that your contribution may be used in the project's dual-licensing model.
-
-That means:
-
-- the public repository is distributed under [AGPL-3.0](LICENSE)
-- the project may also be offered under separate commercial licensing terms
-
-Unless explicitly agreed otherwise in writing, contributions to this repository are accepted under the same terms as the repository itself and may be included in commercial distributions by the project owner.
