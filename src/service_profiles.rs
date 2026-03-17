@@ -42,6 +42,8 @@ struct TomlHost {
     domain: String,
     role: String,
     probe_paths: Vec<String>,
+    #[serde(default)]
+    satisfies_roles: Vec<String>,
 }
 
 // ─── Runtime types ────────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ struct HostEntry {
     domain: String,
     role: String,
     probe_paths: Vec<String>,
+    satisfies_roles: Vec<String>,
 }
 
 // ─── Public API types ─────────────────────────────────────────────────────────
@@ -68,6 +71,7 @@ pub(crate) struct ServiceMatch {
     pub(crate) host_role: String,
     pub(crate) probe_paths: Vec<String>,
     pub(crate) browser_verification: bool,
+    pub(crate) satisfies_roles: Vec<String>,
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -119,6 +123,7 @@ fn build_registry(config: TomlConfig) -> ProfileRegistry {
                     domain: h.domain,
                     role: h.role,
                     probe_paths: h.probe_paths,
+                    satisfies_roles: h.satisfies_roles,
                 })
                 .collect(),
         })
@@ -200,6 +205,7 @@ pub(crate) fn match_target(domain: &str) -> Option<ServiceMatch> {
                     host_role: host_entry.role.clone(),
                     probe_paths: host_entry.probe_paths.clone(),
                     browser_verification: profile.browser_verification,
+                    satisfies_roles: host_entry.satisfies_roles.clone(),
                 };
 
                 if best
@@ -213,6 +219,10 @@ pub(crate) fn match_target(domain: &str) -> Option<ServiceMatch> {
     }
 
     best.map(|(_, m)| m)
+}
+
+pub(crate) fn satisfied_roles(target: &str) -> Vec<String> {
+    match_target(target).map_or_else(Vec::new, |m| m.satisfies_roles)
 }
 
 /// Return the probe paths for a given target, or `["/"]` if unknown.
@@ -312,6 +322,7 @@ mod tests {
         let chat = match_target("chat.openai.com").unwrap();
         assert_eq!(chat.service_name, "OpenAI");
         assert_eq!(chat.host_role, "web");
+        assert!(chat.satisfies_roles.iter().any(|role| role == "auth"));
 
         let upwork_api = match_target("api.upwork.com").unwrap();
         assert_eq!(upwork_api.service_name, "Upwork");
@@ -373,6 +384,24 @@ mod tests {
         let avast = match_target("avast.com").unwrap();
         assert_eq!(avast.service_name, "Avast");
         assert_eq!(avast.host_role, "web");
+
+        let tiktok = match_target("tiktok.com").unwrap();
+        assert!(tiktok.satisfies_roles.iter().any(|role| role == "app"));
+    }
+
+    #[test]
+    fn exposes_satisfied_roles_for_multi_role_hosts() {
+        let openai = satisfied_roles("chatgpt.com");
+        assert!(openai.iter().any(|role| role == "auth"));
+
+        let wise = satisfied_roles("wise.com");
+        assert!(wise.iter().any(|role| role == "auth"));
+
+        let disney = satisfied_roles("disneyplus.com");
+        assert!(disney.iter().any(|role| role == "playback"));
+
+        let deezer = satisfied_roles("deezer.com");
+        assert!(deezer.iter().any(|role| role == "player"));
     }
 
     #[test]

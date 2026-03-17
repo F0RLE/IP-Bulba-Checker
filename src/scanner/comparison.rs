@@ -536,8 +536,14 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
         for item in &items {
             if let Some(role) = item.service_role.as_deref() {
                 observed_roles.insert(role.to_string());
+                for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                    observed_roles.insert(satisfied);
+                }
                 if item.local_verdict == Verdict::GeoBlocked {
                     local_geo_roles.insert(role.to_string());
+                    for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                        local_geo_roles.insert(satisfied);
+                    }
                 }
             }
             match item.decision {
@@ -545,12 +551,18 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
                     confirmed_hosts.push(item.domain.clone());
                     if let Some(role) = item.service_role.as_deref() {
                         confirmed_roles.insert(role.to_string());
+                        for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                            confirmed_roles.insert(satisfied);
+                        }
                     }
                 }
                 ComparisonDecision::CandidateProxyRequired => {
                     candidate_hosts.push(item.domain.clone());
                     if let Some(role) = item.service_role.as_deref() {
                         candidate_roles.insert(role.to_string());
+                        for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                            candidate_roles.insert(satisfied);
+                        }
                     }
                 }
                 ComparisonDecision::ConsistentDirect => {
@@ -560,12 +572,23 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
                     {
                         direct_critical_roles.insert(role.to_string());
                     }
+                    for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                        if service_profiles::is_service_role_critical(
+                            Some(&service),
+                            Some(satisfied.as_str()),
+                        ) {
+                            direct_critical_roles.insert(satisfied);
+                        }
+                    }
                 }
                 ComparisonDecision::NeedsReview => {
                     if item.control_routing_decision == RoutingDecision::DirectOk {
                         review_assisted_hosts.push(item.domain.clone());
                         if let Some(role) = item.service_role.as_deref() {
                             review_assisted_roles.insert(role.to_string());
+                            for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                                review_assisted_roles.insert(satisfied);
+                            }
                         }
                     }
                 }

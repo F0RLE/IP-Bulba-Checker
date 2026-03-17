@@ -1438,6 +1438,38 @@ fn all_direct_critical_roles_can_keep_service_direct_even_with_noncritical_noise
 }
 
 #[test]
+fn multi_role_host_can_satisfy_missing_critical_service_roles() {
+    let comparisons = vec![ComparisonResult {
+        domain: "disneyplus.com".into(),
+        service: Some("Disney+".into()),
+        service_role: Some("storefront".into()),
+        local_verdict: Verdict::GeoBlocked,
+        local_routing_decision: RoutingDecision::ProxyRequired,
+        local_confidence: 99,
+        local_evidence: EvidenceBundle::default(),
+        control_verdict: Verdict::Accessible,
+        control_routing_decision: RoutingDecision::DirectOk,
+        control_evidence: EvidenceBundle::default(),
+        decision: ComparisonDecision::ConfirmedProxyRequired,
+        local_network_evidence: NetworkEvidence::default(),
+        control_network_evidence: NetworkEvidence::default(),
+        network_notes: Vec::new(),
+        reason: "confirmed".into(),
+    }];
+
+    let summaries = summarize_service_geo(&comparisons);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].decision,
+        ServiceGeoDecision::ConfirmedGeoBlocked
+    );
+    assert!(
+        summaries[0].missing_critical_roles.is_empty(),
+        "expected multi-role host coverage to satisfy playback"
+    );
+}
+
+#[test]
 fn all_non_direct_critical_roles_with_geo_marker_can_still_be_likely_geo_blocked() {
     let comparisons = vec![
         ComparisonResult {
