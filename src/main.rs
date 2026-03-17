@@ -5,12 +5,13 @@
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use tokio::task::JoinSet;
 
 mod cli;
+mod config;
 mod geosite;
 mod pipeline;
 mod progress;
@@ -83,7 +84,9 @@ async fn fetch_country(proxy: Option<&str>, timeout_secs: u64) -> Option<String>
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> anyhow::Result<()> {
-    let mut args = Args::parse();
+    let matches = Args::command().get_matches();
+    let mut args = Args::from_arg_matches(&matches)?;
+    let loaded_config = config::load_and_apply(&mut args, &matches)?;
     let version = env!("CARGO_PKG_VERSION");
 
     // Resolve concurrency: CLI flag wins, else last-saved value, else default.
@@ -128,6 +131,13 @@ async fn main() -> anyhow::Result<()> {
     ));
     // Blank line = profile slot. LiveBar will overwrite it on the first tick.
     let _ = term.write_line("");
+    if let Some(config_path) = loaded_config.as_ref() {
+        let _ = term.write_line(&format!(
+            "  {} {}",
+            style_dim.apply_to("config"),
+            style_value.apply_to(config_path.display()),
+        ));
+    }
 
     if !args.format.eq_ignore_ascii_case("text") && !args.format.eq_ignore_ascii_case("json") {
         anyhow::bail!(

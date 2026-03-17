@@ -85,8 +85,12 @@
 ## Tooling & Operator UX
 
 - **Global Configuration (`bulbascan.toml`)**
-  - Status: in progress
-  - Persist defaults for proxies, timeouts, output modes, and comparison settings.
+  - Status: completed
+  - Implemented:
+    - optional `bulbascan.toml` auto-loading from the working directory
+    - explicit `--config` override and `--no-config` escape hatch
+    - precedence: `CLI/env > config file > built-in defaults`
+    - persisted defaults for proxies, timeouts, output profile, browser path, results directory, and comparison settings
 
 - **Enhanced Scan Reports**
   - Status: completed
