@@ -99,15 +99,12 @@ Near-term priorities are therefore:
 
 - **Enhanced Scan Reports**
   - Add confidence summaries, better explanation of `ManualReview`, and clearer per-service output for non-expert operators.
-  - `ManualReview` hotspot reporting by root cause: partially implemented
-    - captcha / challenge
-    - rate-limited
-    - control-path ambiguity
-    - transport failure
-    - weak service coverage
-  - Add publication guidance in reports:
-    - what is safe for strict router exports now
-    - what should stay in review until a later cycle
+  - Current status: completed for the current scope.
+  - Reports now include:
+    - confidence summaries
+    - `ManualReview` hotspot reporting by root cause with operator guidance
+    - publication guidance in `validation_report.txt`
+    - service publication tiers in `service_geo_report.txt`
 
 - **Incremental Publishing Workflow**
   - Publish strict artifacts from the confirmed comparison set on short intervals.

@@ -29,6 +29,29 @@ impl ManualReviewBucket {
             Self::Other => "other",
         }
     }
+
+    fn operator_guidance(self) -> &'static str {
+        match self {
+            Self::Challenge => {
+                "challenge-heavy domains should stay in review until a later refresh or stronger dual-vantage confirmation"
+            }
+            Self::RateLimited => {
+                "rate-limited domains should be retried later and should not be treated as publishable proxy-required results yet"
+            }
+            Self::ControlPathAmbiguity => {
+                "control-path ambiguity means the comparison side is too weak to promote safely; keep these domains out of strict exports"
+            }
+            Self::TransportFailure => {
+                "transport failures are technical noise until later refreshes confirm a stable routing outcome"
+            }
+            Self::WeakServiceCoverage => {
+                "weak service coverage means the service bundle still lacks enough critical-role evidence for publication-grade decisions"
+            }
+            Self::Other => {
+                "other manual-review cases should remain in review until a later cycle produces stronger evidence"
+            }
+        }
+    }
 }
 
 fn looks_like_challenge(text: &str) -> bool {
@@ -425,6 +448,7 @@ pub(crate) fn write_manual_review_hotspot_report(
         writeln!(&mut report)?;
         writeln!(&mut report, "{}", bucket.label())?;
         writeln!(&mut report, "{}", "-".repeat(bucket.label().len()))?;
+        writeln!(&mut report, "guidance: {}", bucket.operator_guidance())?;
         for item in items.iter().take(25) {
             writeln!(
                 &mut report,
