@@ -45,7 +45,7 @@ Contributors help shape the codebase, but project direction, releases, and comme
 
 Bulbascan is developed as:
 
-- a public community project under [AGPL-3.0](../LICENSE)
+- a public community project under [AGPL-3.0](../../LICENSE)
 - a commercially licensable product under separate terms described in [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)
 
 This means:
@@ -65,4 +65,3 @@ Unless explicitly agreed otherwise in writing:
 ## Practical rule
 
 Bulbascan can have many contributors and multiple maintainers, but a single owner-controlled commercial path.
-
