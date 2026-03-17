@@ -213,6 +213,12 @@ async fn main() -> anyhow::Result<()> {
         .results_dir
         .join("strict-sing-box-binary-route-snippet.json");
     let strict_xray_route_path = args.results_dir.join("strict-xray-routing-rule.json");
+    let strict_mihomo_rule_set_path = args.results_dir.join("strict-mihomo-rule-set.txt");
+    let strict_mihomo_binary_rule_set_path = args.results_dir.join("strict-mihomo-rule-set.mrs");
+    let strict_mihomo_provider_path = args.results_dir.join("strict-mihomo-rule-provider.yaml");
+    let strict_mihomo_binary_provider_path = args
+        .results_dir
+        .join("strict-mihomo-binary-rule-provider.yaml");
     let strict_openwrt_pbr_path = args.results_dir.join("strict-openwrt-pbr-domains.txt");
     let strict_openwrt_dnsmasq_path = args.results_dir.join("strict-openwrt-dnsmasq-ipset.conf");
     let publication_report_path = args.results_dir.join("publication_report.txt");
@@ -831,10 +837,26 @@ async fn main() -> anyhow::Result<()> {
                 &strict_sing_box_route_path,
                 &strict_sing_box_binary_route_path,
                 &strict_xray_route_path,
+                &strict_mihomo_rule_set_path,
+                &strict_mihomo_binary_rule_set_path,
+                &strict_mihomo_provider_path,
+                &strict_mihomo_binary_provider_path,
                 &strict_openwrt_pbr_path,
                 &strict_openwrt_dnsmasq_path,
                 &args.results_dir.join("known-service-bundle-rule-set.json"),
                 &args.results_dir.join("known-service-bundle-rule-set.srs"),
+                &args
+                    .results_dir
+                    .join("known-service-bundle-mihomo-rule-set.txt"),
+                &args
+                    .results_dir
+                    .join("known-service-bundle-mihomo-rule-set.mrs"),
+                &args
+                    .results_dir
+                    .join("known-service-bundle-mihomo-rule-provider.yaml"),
+                &args
+                    .results_dir
+                    .join("known-service-bundle-mihomo-binary-rule-provider.yaml"),
                 &args
                     .results_dir
                     .join("known-service-bundle-route-snippet.json"),
@@ -861,6 +883,18 @@ async fn main() -> anyhow::Result<()> {
                 &args
                     .results_dir
                     .join("generic-apex-bypass-xray-routing-rule.json"),
+                &args
+                    .results_dir
+                    .join("generic-apex-bypass-mihomo-rule-set.txt"),
+                &args
+                    .results_dir
+                    .join("generic-apex-bypass-mihomo-rule-set.mrs"),
+                &args
+                    .results_dir
+                    .join("generic-apex-bypass-mihomo-rule-provider.yaml"),
+                &args
+                    .results_dir
+                    .join("generic-apex-bypass-mihomo-binary-rule-provider.yaml"),
                 &args.results_dir.join("generic-apex-bypass-domains.txt"),
                 &args
                     .results_dir
