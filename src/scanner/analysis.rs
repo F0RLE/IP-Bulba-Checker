@@ -484,11 +484,11 @@ fn annotate_reason(reason: &str, note: &str) -> String {
     }
 }
 
-fn annotate_signal(existing: Option<String>, note: String) -> Option<String> {
+fn annotate_signal(existing: Option<String>, note: String) -> String {
     match existing {
-        Some(existing) if existing.contains(&note) => Some(existing),
-        Some(existing) => Some(format!("{existing}; {note}")),
-        None => Some(note),
+        Some(existing) if existing.contains(&note) => existing,
+        Some(existing) => format!("{existing}; {note}"),
+        None => note,
     }
 }
 
@@ -513,7 +513,7 @@ pub(crate) fn apply_dns_evidence_adjustment(
         let kind = dns_failure_kind(network_evidence.dns.detail.as_deref()).unwrap_or("failed");
         let note = format!("system DNS {kind} while DoH resolved");
         result.reason = annotate_reason(&result.reason, &note);
-        result.evidence.signal = annotate_signal(result.evidence.signal.take(), note.clone());
+        result.evidence.signal = Some(annotate_signal(result.evidence.signal.take(), note.clone()));
 
         let strong_dns_failure = matches!(kind, "nxdomain" | "servfail" | "timeout" | "refused");
 
@@ -563,7 +563,7 @@ pub(crate) fn apply_dns_evidence_adjustment(
                 .unwrap_or_default()
         );
         result.reason = annotate_reason(&result.reason, &note);
-        result.evidence.signal = annotate_signal(result.evidence.signal.take(), note);
+        result.evidence.signal = Some(annotate_signal(result.evidence.signal.take(), note));
 
         if (tcp_failed || tls_failed)
             && matches!(

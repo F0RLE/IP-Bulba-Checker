@@ -118,7 +118,7 @@ Near-term priorities are therefore:
   - Improve browser auto-detection so Windows, macOS, and Linux builds can find Chrome / Chromium / Edge more reliably.
   - Reduce terminal/UI variance by falling back cleanly when ANSI or VT sequences are not supported.
   - Keep browser-assisted confirmation behavior as consistent as practical across supported desktop platforms.
-  - Current status: partially implemented; browser auto-detection now checks env overrides, `PATH`, and common install locations across Windows, macOS, and Linux, but terminal capability fallback is still pending.
+  - Current status: completed for the current scope; browser auto-detection now checks env overrides, `PATH`, and common install locations across Windows, macOS, and Linux, and the progress UI falls back to plain text when ANSI / VT support is unavailable.
 
 ## Experimental
 
