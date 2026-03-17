@@ -74,8 +74,9 @@
   - Current scope: Bulbascan now writes `.srs` rule sets and matching binary route snippets when a local `sing-box` CLI is available, while keeping source-format JSON rule sets as the portable baseline output.
 
 - **Mihomo Rule-Set (`.mrs`) Export**
-  - Status: in progress
+  - Status: completed
   - Add export support for current Mihomo / Clash rule-set consumers.
+  - Current scope: Bulbascan now writes Mihomo text rule sets and provider snippets by default, and compiles optional `.mrs` rule sets plus binary provider snippets when a local `mihomo` / `clash-meta` CLI is available.
 
 - **GeoIP `geoip.dat` Generation**
   - Status: in progress
