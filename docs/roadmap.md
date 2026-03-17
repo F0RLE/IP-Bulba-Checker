@@ -35,7 +35,7 @@ Near-term priorities are therefore:
   - Distinguish stronger cases such as "local DNS manipulation suspected", "resolver unhealthy", and "DNS mismatch confirmed by failed direct tcp/tls".
 
 - **Dual-vantage confidence improvements**
-  - Status: partially implemented
+  - Status: in progress
   - Tighten `ConfirmedProxyRequired` vs `CandidateProxyRequired` promotion rules.
   - Reduce false `ConsistentBlocked` outcomes caused by weak or same-region control proxies.
   - Surface clearer reasoning when the control path proves direct access but the local path is challenged or blocked.
@@ -55,7 +55,7 @@ Near-term priorities are therefore:
   - Current scope: bulk runs now cap total browser confirmations and per-domain browser paths, known challenge headers such as `cf-mitigated: challenge` and `x-amzn-waf-action=captcha|challenge` are labeled more precisely, and repeated browser confirmation is skipped for challenge families already confirmed earlier in the same scan.
 
 - **Service-profile coverage**
-  - Status: partially implemented
+  - Status: in progress
   - Expand `profiles.toml` so major blocked services expose enough critical-role coverage for reliable service-level decisions.
   - Improve per-service reasoning when only partial host coverage is observed.
   - Current scope: service coverage now supports multi-role hosts for products that expose auth/app/playback on the same public domain, but more host-level coverage is still needed for API- and console-heavy services.
@@ -70,7 +70,7 @@ Near-term priorities are therefore:
 ## Performance & Scale
 
 - **Concurrent Domain Ingestion**
-  - Status: planned
+  - Status: in progress
   - Parallelize large input file loading to reduce startup latency on community blocklists.
 
 - **Moving Average Speed Smoothing**
@@ -80,33 +80,33 @@ Near-term priorities are therefore:
 ## Network & Transport Research
 
 - **ECH (Encrypted Client Hello) Support**
-  - Status: planned
+  - Status: in progress
   - Add optional ECH probing for targets and CDNs that publish usable ECH configuration.
   - Treat ECH as an additional research/detection signal, not as a universal bypass path.
 
 - **XHTTP & HTTP/3 Probing**
-  - Status: planned
+  - Status: in progress
   - Evaluate Xray XHTTP and HTTP/3/QUIC as secondary transports for domains that are ambiguous over the default path.
   - Only keep this if it materially improves classification quality for selective proxy lists.
 
 ## Output & Export Formats
 
 - **Direct `.srs` (sing-box Rule Set v4) Compilation**
-  - Status: planned
+  - Status: in progress
   - Generate binary sing-box rule sets directly for lower-memory router deployments.
 
 - **Mihomo Rule-Set (`.mrs`) Export**
-  - Status: planned
+  - Status: in progress
   - Add export support for current Mihomo / Clash rule-set consumers.
 
 - **GeoIP `geoip.dat` Generation**
-  - Status: planned
+  - Status: in progress
   - Aggregate IP-level evidence into GeoIP-oriented outputs where that signal is stable enough to trust.
 
 ## Tooling & Operator UX
 
 - **Global Configuration (`bulbascan.toml`)**
-  - Status: planned
+  - Status: in progress
   - Persist defaults for proxies, timeouts, output modes, and comparison settings.
 
 - **Enhanced Scan Reports**
@@ -136,19 +136,19 @@ Near-term priorities are therefore:
 ## Experimental
 
 - **AI Labyrinth / visibility-safe interaction**
-  - Status: planned
+  - Status: in progress
   - If interactive browser automation expands, ensure the scanner never interacts with invisible honeypot links or decoy elements.
   - Keep this scoped to browser confirmation flows only.
 
 - **CapSolver / 2Captcha hooks**
-  - Status: planned
+  - Status: in progress
   - Explore only if challenge-solving becomes necessary for materially better classification.
   - Do not make paid captcha-solving a hard dependency of normal scanning.
 
 - **HTTP-level IP spoofing**
-  - Status: planned
+  - Status: in progress
   - Experimental only. Keep disabled by default unless it produces measurable classification value without increasing false positives.
 
 - **Daemon / REST API Mode**
-  - Status: planned
+  - Status: in progress
   - Lower priority than classification accuracy. Consider only after the detection pipeline stabilizes.
