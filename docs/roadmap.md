@@ -41,7 +41,7 @@ Near-term priorities are therefore:
     - suppress technical noise like `worker error`
     - distinguish control-healthy ambiguity from transport-failure ambiguity
     - emit cleaner top-level buckets for publication decisions
-  - Current status: partially implemented; further cleanup is still needed after the latest bulk scan.
+  - Current status: partially implemented; `NeedsReview` now distinguishes control-path ambiguity from transport ambiguity, but broader comparison cleanup is still needed after the latest bulk scan.
 
 - **Browser verification as a confirmation layer**
   - Keep browser verification focused on confirming challenge pages, geo walls, and selective WAF behavior.
