@@ -53,6 +53,7 @@ Near-term priorities are therefore:
 - **Service-profile coverage**
   - Expand `profiles.toml` so major blocked services expose enough critical-role coverage for reliable service-level decisions.
   - Improve per-service reasoning when only partial host coverage is observed.
+  - Current status: partially implemented; service coverage now supports multi-role hosts for products that expose auth/app/playback on the same public domain, but more host-level coverage is still needed for API- and console-heavy services.
   - Immediate targets from the latest scan:
     - OpenAI (`auth`, `api`)
     - Anthropic (`console`, `api`)

@@ -27,11 +27,23 @@ critical_roles  = ["web", "auth", "api"]
 domain = "chat.openai.com"
 role   = "web"
 probe_paths = ["/", "/auth/login"]
+satisfies_roles = ["auth"]
 
 [[services.hosts]]
 domain = "chatgpt.com"
 role   = "web"
 probe_paths = ["/", "/auth/login"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "sora.com"
+role   = "app"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "sora.chatgpt.com"
+role   = "app"
+probe_paths = ["/"]
 
 [[services.hosts]]
 domain = "auth.openai.com"
@@ -70,6 +82,7 @@ critical_roles  = ["web", "console", "api"]
 domain = "claude.ai"
 role   = "web"
 probe_paths = ["/", "/login"]
+satisfies_roles = ["console"]
 
 [[services.hosts]]
 domain = "console.anthropic.com"
@@ -134,6 +147,7 @@ critical_roles  = ["web", "auth", "api"]
 domain = "wise.com"
 role   = "web"
 probe_paths = ["/", "/login"]
+satisfies_roles = ["auth"]
 
 [[services.hosts]]
 domain = "login.wise.com"
@@ -244,6 +258,7 @@ critical_roles  = ["storefront", "playback"]
 domain = "disneyplus.com"
 role   = "storefront"
 probe_paths = ["/", "/welcome"]
+satisfies_roles = ["playback"]
 
 [[services.hosts]]
 domain = "www.disneyplus.com"
@@ -313,6 +328,7 @@ critical_roles  = ["web", "player"]
 domain = "deezer.com"
 role   = "web"
 probe_paths = ["/"]
+satisfies_roles = ["player"]
 
 [[services.hosts]]
 domain = "www.deezer.com"
@@ -574,6 +590,7 @@ critical_roles  = ["web", "app"]
 domain = "tiktok.com"
 role   = "web"
 probe_paths = ["/", "/explore"]
+satisfies_roles = ["app"]
 
 [[services.hosts]]
 domain = "www.tiktok.com"
