@@ -4,9 +4,11 @@
 //! explicitly and has no side-effects beyond what is returned or awaited.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::cli::{BlockedListFormatArg, normalize_domain};
+use tokio::io::AsyncBufReadExt;
+
+use crate::cli::{BlockedListFormatArg, normalize_domain, parse_annotated_domain_line};
 use crate::scanner::{ComparisonDecision, ComparisonResult, RoutingDecision, ScanResult};
 use crate::state::LocalState;
 use crate::validation::ExpectedOutcome;
@@ -72,6 +74,43 @@ pub(crate) fn blocked_domains_from_comparisons(comparisons: &[ComparisonResult])
     domains.sort();
     domains.dedup();
     domains
+}
+
+/// Load one plain-text domain file line by line, preserving per-file order.
+pub(crate) async fn load_annotated_domains_from_file(
+    path: &Path,
+) -> anyhow::Result<Vec<(String, Option<ExpectedOutcome>)>> {
+    let file = tokio::fs::File::open(path).await?;
+    let mut reader = tokio::io::BufReader::new(file);
+    let mut line = String::new();
+    let mut entries = Vec::new();
+
+    while reader.read_line(&mut line).await? > 0 {
+        if let Some(entry) = parse_annotated_domain_line(&line) {
+            entries.push(entry);
+        }
+        line.clear();
+    }
+
+    Ok(entries)
+}
+
+/// Load one plain line-oriented file, trimming whitespace and comments.
+pub(crate) async fn load_trimmed_lines_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
+    let file = tokio::fs::File::open(path).await?;
+    let mut reader = tokio::io::BufReader::new(file);
+    let mut line = String::new();
+    let mut entries = Vec::new();
+
+    while reader.read_line(&mut line).await? > 0 {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            entries.push(trimmed.to_string());
+        }
+        line.clear();
+    }
+
+    Ok(entries)
 }
 
 // ─── File writing ─────────────────────────────────────────────────────────────
@@ -140,6 +179,15 @@ pub(crate) async fn merge_blocked_domains_into_list(
 mod tests {
     use super::*;
     use crate::cli::BlockedListFormatArg;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file_path(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        std::env::temp_dir().join(format!("bulbascan-{name}-{unique}.txt"))
+    }
 
     #[test]
     fn renders_geosite_source_blocked_list() {
@@ -186,5 +234,45 @@ mod tests {
         assert!(!expected.contains_key("direct.example"));
         assert!(expected.contains_key("review.example"));
         assert!(expected.contains_key("new.example"));
+    }
+
+    #[tokio::test]
+    async fn loads_annotated_domains_from_plain_text_file() {
+        let path = temp_file_path("annotated-domains");
+        std::fs::write(
+            &path,
+            "# comment\ngeo claude.ai\nDOMAIN-SUFFIX,chatgpt.com\n\n",
+        )
+        .unwrap();
+
+        let entries = load_annotated_domains_from_file(&path).await.unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "claude.ai");
+        assert!(entries[0].1.is_some());
+        assert_eq!(entries[1].0, "chatgpt.com");
+        assert!(entries[1].1.is_none());
+    }
+
+    #[tokio::test]
+    async fn loads_trimmed_non_comment_lines() {
+        let path = temp_file_path("trimmed-lines");
+        std::fs::write(
+            &path,
+            "# comment\n  socks5://127.0.0.1:1080 \n\nhttp://1.2.3.4:8080\n",
+        )
+        .unwrap();
+
+        let entries = load_trimmed_lines_from_file(&path).await.unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            entries,
+            vec![
+                "socks5://127.0.0.1:1080".to_string(),
+                "http://1.2.3.4:8080".to_string()
+            ]
+        );
     }
 }

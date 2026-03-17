@@ -46,8 +46,9 @@
 ## Performance & Scale
 
 - **Concurrent Domain Ingestion**
-  - Status: in progress
+  - Status: completed
   - Parallelize large input file loading to reduce startup latency on community blocklists.
+  - Current scope: plain-text input files are now loaded concurrently and merged deterministically in source order, while proxy lists use streaming line-by-line ingestion instead of whole-file reads.
 
 - **Moving Average Speed Smoothing**
   - Status: completed

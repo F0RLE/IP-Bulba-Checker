@@ -8,7 +8,7 @@
 use clap::Parser;
 use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
-use tokio::io::AsyncBufReadExt;
+use tokio::task::JoinSet;
 
 mod cli;
 mod geosite;
@@ -24,9 +24,10 @@ mod state;
 mod validation;
 mod xray;
 
-use cli::{Args, ExportProfileArg, default_results_dir_for_input, parse_annotated_domain_line};
+use cli::{Args, ExportProfileArg, default_results_dir_for_input};
 use pipeline::{
     blocked_domains_from_comparisons, blocked_domains_from_results, filter_pending_domains,
+    load_annotated_domains_from_file, load_trimmed_lines_from_file,
     merge_blocked_domains_into_list, write_blocked_domain_list,
 };
 
@@ -256,6 +257,7 @@ async fn main() -> anyhow::Result<()> {
         // anything else → plain domain list text file
         let files = args.files;
         let geosite_category = &args.import_geosite_category;
+        let mut text_inputs = Vec::new();
 
         // Also honour the legacy --import-geosite explicit flag if set
         if let Some(ref dat_path) = args.import_geosite
@@ -365,21 +367,38 @@ async fn main() -> anyhow::Result<()> {
                     anyhow::bail!("Error: Input file '{}' not found.", path.display());
                 }
 
-                let file = tokio::fs::File::open(&path).await?;
-                let mut reader = tokio::io::BufReader::new(file);
-                let mut line = String::new();
-                let before = domains.len();
+                // Defer plain-text file ingestion so multiple independent inputs
+                // can be read concurrently, then merged deterministically.
+                text_inputs.push((text_inputs.len(), path.clone()));
+            }
+        }
 
-                while reader.read_line(&mut line).await? > 0 {
-                    if let Some((domain, expected)) = parse_annotated_domain_line(&line)
-                        && seen.insert(domain.clone())
-                    {
+        if !text_inputs.is_empty() {
+            let mut tasks = JoinSet::new();
+            for (index, path) in text_inputs {
+                tasks.spawn(async move {
+                    let entries = load_annotated_domains_from_file(&path).await;
+                    (index, path, entries)
+                });
+            }
+
+            let mut loaded = Vec::new();
+            while let Some(result) = tasks.join_next().await {
+                let (index, path, entries) = result?;
+                loaded.push((index, path, entries?));
+            }
+
+            loaded.sort_by_key(|(index, _, _)| *index);
+
+            for (_, path, entries) in loaded {
+                let before = domains.len();
+                for (domain, expected) in entries {
+                    if seen.insert(domain.clone()) {
                         if let Some(expected) = expected {
                             expected_outcomes.insert(domain.clone(), expected);
                         }
                         domains.push(domain);
                     }
-                    line.clear();
                 }
 
                 if domains.len() - before > 0 {
@@ -417,14 +436,7 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(path) = args.proxies {
         if path.exists() && path.is_file() {
-            let content = tokio::fs::read_to_string(&path).await?;
-
-            for line in content.lines() {
-                let clean = line.trim();
-                if !clean.is_empty() && !clean.starts_with('#') {
-                    proxies.push(clean.to_string());
-                }
-            }
+            proxies.extend(load_trimmed_lines_from_file(&path).await?);
         } else {
             anyhow::bail!("Error: Proxies file '{}' not found.", path.display());
         }
