@@ -169,7 +169,10 @@ async fn system_resolver_health_note(
 pub(crate) async fn resolve_host(host: &str, timeout_secs: u64) -> (ProbeEvidence, Vec<IpAddr>) {
     let resolver = build_system_resolver();
     match resolve_with_system_resolver(&resolver, host, timeout_secs).await {
-        Ok(ips) if ips.is_empty() => (ProbeEvidence::failed("kind=nodata resolved no addresses"), Vec::new()),
+        Ok(ips) if ips.is_empty() => (
+            ProbeEvidence::failed("kind=nodata resolved no addresses"),
+            Vec::new(),
+        ),
         Ok(ips) => {
             let preview = ips
                 .iter()
@@ -181,12 +184,11 @@ pub(crate) async fn resolve_host(host: &str, timeout_secs: u64) -> (ProbeEvidenc
         }
         Err(err) => {
             let kind = categorize_system_dns_error(&err);
-            let resolver_health = system_resolver_health_note(&resolver, timeout_secs).await
+            let resolver_health = system_resolver_health_note(&resolver, timeout_secs)
+                .await
                 .unwrap_or("resolver_control_unknown");
             (
-                ProbeEvidence::failed(format!(
-                    "kind={kind} {resolver_health}: {err}"
-                )),
+                ProbeEvidence::failed(format!("kind={kind} {resolver_health}: {err}")),
                 Vec::new(),
             )
         }

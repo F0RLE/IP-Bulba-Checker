@@ -6,8 +6,8 @@ use std::net::IpAddr;
 use super::TransportErrorKind;
 use super::types::{
     DomainStatus, Evidence, EvidenceBundle, NetworkEvidence, ProbeStatus, RoutingDecision,
-    ScanPolicy, ScanResult, Verdict,
-    build_scan_result, path_from_url_like, routing_decision_for, with_evidence,
+    ScanPolicy, ScanResult, Verdict, build_scan_result, path_from_url_like, routing_decision_for,
+    with_evidence,
 };
 
 const INFRA_DOMAIN_MARKERS: &[&str] = &[
@@ -469,7 +469,11 @@ pub(crate) fn apply_dns_evidence_adjustment(
         let note = format!(
             "system DNS differs from DoH: system={} doh={}",
             network_evidence.dns.detail.as_deref().unwrap_or_default(),
-            network_evidence.path_dns.detail.as_deref().unwrap_or_default()
+            network_evidence
+                .path_dns
+                .detail
+                .as_deref()
+                .unwrap_or_default()
         );
         result.reason = annotate_reason(&result.reason, &note);
         result.evidence.signal = annotate_signal(result.evidence.signal.take(), note);
