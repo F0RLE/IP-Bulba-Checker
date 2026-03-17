@@ -46,6 +46,9 @@ Everything in `simple`, plus:
 | `confirmed_proxy_required.txt` | Domains confirmed by dual-vantage comparison |
 | `control_proxy_health.txt` | Control-proxy preflight report |
 | `service_geo_report.txt` | Service-level geo summary from comparison results, including service publication tiers |
+| `publication_report.txt` | Publication-tier and hot/warm/cold rescan guidance for the current run |
+| `publish-*.txt` files | Tiered publication outputs: strict, review-only, direct-only |
+| `rescan-*.txt` files | Hot/warm/cold refresh queues for later incremental cycles |
 | `strict-*` files | Strict exports based only on confirmed dual-vantage results |
 | `known-service-bundle-*` files | Minimal host bundles for known services |
 | `generic-apex-bypass-*` files | Apex-level exports for unmapped proxy-required domains |
@@ -63,6 +66,7 @@ Adds validation output on top of `router`.
 - what is safe to publish now via `strict-*` exports
 - what should remain in review (`candidate_proxy_required`, `manual_review`, incomplete service bundles)
 - which service bundles are `strict_publishable`, `review_only`, or `direct_only`
+- which domains belong in the short-, medium-, and long-interval rescan queues
 
 ---
 
@@ -104,5 +108,8 @@ When `--state-dir` is used, Bulbascan also maintains persistent state files:
 | `blocked.txt` | Persisted blocked/proxy-required set |
 | `direct.txt` | Persisted direct-ok set |
 | `manual_review.txt` | Persisted uncertain set |
+| `rescan-hot.txt` | Short-interval refresh queue |
+| `rescan-warm.txt` | Medium-interval refresh queue |
+| `rescan-cold.txt` | Long-interval refresh queue |
 
 These files are used to skip already-known domains on later runs unless `--refresh-known` is enabled.

@@ -14,6 +14,7 @@ mod cli;
 mod geosite;
 mod pipeline;
 mod progress;
+mod publication;
 mod radar;
 mod router_exports;
 mod scanner;
@@ -208,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
     let strict_xray_route_path = args.results_dir.join("strict-xray-routing-rule.json");
     let strict_openwrt_pbr_path = args.results_dir.join("strict-openwrt-pbr-domains.txt");
     let strict_openwrt_dnsmasq_path = args.results_dir.join("strict-openwrt-dnsmasq-ipset.conf");
+    let publication_report_path = args.results_dir.join("publication_report.txt");
     let output_format = args.format.clone();
     let signatures_file = args.signatures.clone();
     let scan_policy = args.profile.as_scanner_policy();
@@ -578,6 +580,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut geosite_domains = blocked_domains_for_outputs.clone();
     let mut geosite_use_scan_results = true;
+    let mut comparison_results: Option<Vec<scanner::ComparisonResult>> = None;
 
     if let Some(control_proxy) = args.control_proxy.clone() {
         println!("Checking control proxy health...");
@@ -798,6 +801,8 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => eprintln!("Error refreshing validation report: {e}"),
                 }
             }
+
+            comparison_results = Some(comparisons);
         } else {
             println!("Control proxy health check failed. Skipping comparison scan.");
             for stale in [
@@ -838,6 +843,28 @@ async fn main() -> anyhow::Result<()> {
                     let _ = std::fs::remove_file(stale);
                 }
             }
+        }
+    }
+
+    if matches!(
+        args.export_profile,
+        ExportProfileArg::Router | ExportProfileArg::Full
+    ) {
+        match publication::write_publication_outputs(
+            &scan_results,
+            comparison_results.as_deref(),
+            &args.results_dir,
+            state_dir.as_deref(),
+        ) {
+            Ok(()) => println!(
+                "Publication artifacts saved to {} and rescan queues updated{}.",
+                publication_report_path.display(),
+                state_dir
+                    .as_ref()
+                    .map(|dir| format!(" in {}", dir.display()))
+                    .unwrap_or_default()
+            ),
+            Err(e) => eprintln!("Error writing publication artifacts: {e}"),
         }
     }
 
