@@ -1533,6 +1533,7 @@ fn safe_policy_limits_probe_budget() {
     assert_eq!(policy.profile, ScanProfile::Safe);
     assert_eq!(policy.max_secondary_probes, 1);
     assert_eq!(policy.max_browser_probe_paths, 1);
+    assert_eq!(policy.max_browser_verifications, 8);
     assert!(!policy.allow_control_browser_verify);
     assert_eq!(policy.retest_attempts, 1);
     assert_eq!(policy.retest_backoff_ms, 350);
@@ -1543,7 +1544,8 @@ fn aggressive_policy_unlocks_full_probe_budget() {
     let policy = ScanPolicy::aggressive();
     assert_eq!(policy.profile, ScanProfile::Aggressive);
     assert_eq!(policy.max_secondary_probes, usize::MAX);
-    assert_eq!(policy.max_browser_probe_paths, usize::MAX);
+    assert_eq!(policy.max_browser_probe_paths, 2);
+    assert_eq!(policy.max_browser_verifications, 96);
     assert!(policy.allow_control_browser_verify);
     assert_eq!(policy.retest_attempts, 2);
     assert_eq!(policy.retest_backoff_ms, 250);
