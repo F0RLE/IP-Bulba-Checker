@@ -212,4 +212,11 @@ When reporting a detection bug (wrong verdict for a domain):
 
 ## License
 
-By contributing, you agree that your contribution is licensed under the [AGPL-3.0 License](LICENSE).
+By contributing, you agree that your contribution may be used in the project's dual-licensing model.
+
+That means:
+
+- the public repository is distributed under [AGPL-3.0](LICENSE)
+- the project may also be offered under separate commercial licensing terms
+
+Unless explicitly agreed otherwise in writing, contributions to this repository are accepted under the same terms as the repository itself and may be included in commercial distributions by the project owner.

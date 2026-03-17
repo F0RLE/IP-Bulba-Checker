@@ -6,6 +6,7 @@
   <p align="center">
     <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.94%2B-orange?logo=rust&logoColor=white" alt="Rust"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-red.svg" alt="License: AGPL-3.0"></a>
+    <a href="COMMERCIAL-LICENSE.md"><img src="https://img.shields.io/badge/commercial-license_available-blue.svg" alt="Commercial license available"></a>
     <a href="https://github.com/F0RLE/Bulbascan/actions"><img src="https://img.shields.io/github/actions/workflow/status/F0RLE/Bulbascan/ci.yml?label=CI&logo=github" alt="CI"></a>
     <a href="https://github.com/F0RLE/Bulbascan/releases"><img src="https://img.shields.io/github/v/release/F0RLE/Bulbascan?include_prereleases&label=release" alt="Release"></a>
   </p>
@@ -139,4 +140,7 @@ Built with AI-assisted tooling (Antigravity, Claude, and similar agentic coding 
 
 ## License
 
-[AGPL-3.0](LICENSE) © 2026 — Commercial licensing available: `lrshka.klim7766@gmail.com`
+Bulbascan uses a dual-licensing model:
+
+- Open-source use: [AGPL-3.0](LICENSE)
+- Commercial / OEM licensing: [Commercial Licensing](COMMERCIAL-LICENSE.md)
