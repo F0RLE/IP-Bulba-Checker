@@ -114,6 +114,12 @@ Near-term priorities are therefore:
   - Keep broader local-only proxy candidates in a lower-trust tier until they survive later refresh cycles.
   - Support hot / warm / cold rescan queues for very large domain universes instead of trying to refresh everything every cycle.
 
+- **Cross-platform runtime hardening**
+  - Improve browser auto-detection so Windows, macOS, and Linux builds can find Chrome / Chromium / Edge more reliably.
+  - Reduce terminal/UI variance by falling back cleanly when ANSI or VT sequences are not supported.
+  - Keep browser-assisted confirmation behavior as consistent as practical across supported desktop platforms.
+  - Current status: partially implemented; browser auto-detection now checks env overrides, `PATH`, and common install locations across Windows, macOS, and Linux, but terminal capability fallback is still pending.
+
 ## Experimental
 
 - **AI Labyrinth / visibility-safe interaction**
