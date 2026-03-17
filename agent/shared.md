@@ -23,6 +23,25 @@ Bulbascan is a Rust CLI for high-speed selective-proxy scanning, geo-block detec
 - Avoid `unwrap()` outside tests unless failure is truly unrecoverable.
 - Preserve dual-vantage validation logic when touching block-classification behavior.
 - Keep docs and roadmap aligned with actual code state.
+- Before implementing a roadmap feature, first verify whether the relevant external technical guidance or ecosystem behavior has changed.
+- For scanning, anti-bot, DNS, transport, browser, or proxy-related features: check current external sources first, then implement against the verified baseline instead of relying only on older local assumptions.
+
+## Working With This Project
+
+- Start by checking the current branch, local diff, and whether there are unrelated uncommitted changes.
+- Treat runtime artifacts and personal local state separately from code changes; do not mix them into feature commits.
+- When implementing a feature:
+  1. inspect the current local implementation
+  2. verify current external guidance when the topic is ecosystem-sensitive
+  3. create a dedicated feature branch from `nightly`
+  4. implement the smallest coherent slice that is worth reviewing
+  5. run `cargo fmt`, `cargo check`, and `cargo test`
+  6. update `docs/roadmap.md` if the feature status changed
+  7. open a PR into `nightly`
+- Use the `<your-name>/feature/<name>` branch naming pattern.
+- Do not bundle unrelated cleanup into a feature PR unless it is truly incidental and low risk.
+- If local unrelated changes already exist, review them separately and commit them separately.
+- Prefer strict, reviewable increments over large “finish everything at once” branches.
 
 ## Git Workflow
 

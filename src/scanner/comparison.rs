@@ -39,6 +39,52 @@ fn resolver_health_note(detail: Option<&str>) -> Option<&str> {
 const MIN_CONFIDENT_CONTROL_DIRECT: u8 = 80;
 const MIN_CONFIDENT_CONTROL_BLOCKED: u8 = 80;
 
+fn is_transport_noise_result(result: &ScanResult) -> bool {
+    result
+        .evidence
+        .signal
+        .as_deref()
+        .is_some_and(|signal| signal.contains("worker error"))
+        || result
+            .evidence
+            .source
+            .as_deref()
+            .is_some_and(|source| matches!(source, "scanner" | "transport"))
+        || matches!(
+            result.verdict,
+            Verdict::Unreachable | Verdict::TlsFailure | Verdict::UnexpectedStatus
+        )
+        || (result.network_evidence.dns.status != ProbeStatus::Ok
+            && result.network_evidence.path_dns.status != ProbeStatus::Ok)
+}
+
+fn classify_needs_review_reason(local: &ScanResult, control: &ScanResult) -> String {
+    let local_transport_noise = is_transport_noise_result(local);
+    let control_transport_noise = is_transport_noise_result(control);
+    let control_is_weak = control_note(control).is_some();
+
+    if local_transport_noise && control_transport_noise {
+        return "transport ambiguity: both local and control paths are too noisy to classify confidently"
+            .to_string();
+    }
+
+    if local_transport_noise {
+        return "transport ambiguity: local path is dominated by transient or technical failure"
+            .to_string();
+    }
+
+    if control_transport_noise || control_is_weak {
+        return "control-path ambiguity: control side is too weak to separate local blocking from broader failure"
+            .to_string();
+    }
+
+    format!(
+        "local route={} control route={}",
+        routing_decision_label(local.routing_decision),
+        routing_decision_label(control.routing_decision)
+    )
+}
+
 fn control_supports_direct_promotion(control: &ScanResult) -> bool {
     control.routing_decision == RoutingDecision::DirectOk
         && control.verdict == Verdict::Accessible
@@ -168,22 +214,13 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
                 && control.routing_decision != RoutingDecision::DirectOk
                 && control_blocked_is_weak
             {
-                format!(
-                    "both paths are non-direct, but control is too weak to confirm a shared blocked outcome"
-                )
+                classify_needs_review_reason(local, control)
             } else if control.routing_decision == RoutingDecision::DirectOk
                 && !control_supports_direct
             {
-                format!(
-                    "local route={} but control direct evidence is too weak to promote confidently",
-                    routing_decision_label(local.routing_decision)
-                )
+                classify_needs_review_reason(local, control)
             } else {
-                format!(
-                    "local route={} control route={}",
-                    routing_decision_label(local.routing_decision),
-                    routing_decision_label(control.routing_decision)
-                )
+                classify_needs_review_reason(local, control)
             }
         }
     };
@@ -319,10 +356,21 @@ pub fn write_control_comparison_report(
 ) -> anyhow::Result<()> {
     let mut counts = BTreeMap::<&str, usize>::new();
     let mut dns_note_counts = BTreeMap::<&str, usize>::new();
+    let mut needs_review_counts = BTreeMap::<&str, usize>::new();
     for comparison in comparisons {
         *counts
             .entry(comparison_decision_label(comparison.decision))
             .or_default() += 1;
+        if comparison.decision == ComparisonDecision::NeedsReview {
+            let bucket = if comparison.reason.starts_with("control-path ambiguity:") {
+                "control_path_ambiguity"
+            } else if comparison.reason.starts_with("transport ambiguity:") {
+                "transport_ambiguity"
+            } else {
+                "mixed_or_other"
+            };
+            *needs_review_counts.entry(bucket).or_default() += 1;
+        }
         for note in &comparison.network_notes {
             let bucket = if note.contains("local DNS manipulation suspected") {
                 "dns_manipulation_suspected"
@@ -346,6 +394,13 @@ pub fn write_control_comparison_report(
     writeln!(&mut report, "Summary")?;
     for (decision, count) in counts {
         writeln!(&mut report, "- {decision}: {count}")?;
+    }
+    if !needs_review_counts.is_empty() {
+        writeln!(&mut report)?;
+        writeln!(&mut report, "Needs review breakdown")?;
+        for (label, count) in needs_review_counts {
+            writeln!(&mut report, "- {label}: {count}")?;
+        }
     }
     if !dns_note_counts.is_empty() {
         writeln!(&mut report)?;

@@ -661,6 +661,151 @@ fn comparison_report_summarizes_dns_signal_buckets() {
 }
 
 #[test]
+fn weak_control_needs_review_is_labeled_as_control_path_ambiguity() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::GeoBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 94,
+        http_status: Some(451),
+        reason: "geo".into(),
+        block_type: Some(BlockType::Geo),
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 65,
+        http_status: Some(200),
+        reason: "ok".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison.reason.starts_with("control-path ambiguity:"));
+}
+
+#[test]
+fn worker_error_needs_review_is_labeled_as_transport_ambiguity() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle {
+            source: Some("scanner".into()),
+            path: Some("/".into()),
+            final_url: None,
+            title: None,
+            signal: Some("worker error".into()),
+        },
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("lookup failed"),
+            path_dns: ProbeEvidence::failed("doh failed"),
+            tcp_443: ProbeEvidence::skipped("dns failed"),
+            tls_443: ProbeEvidence::skipped("dns failed"),
+            tcp_80: ProbeEvidence::skipped("dns failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 40,
+        http_status: None,
+        reason: "Error: worker error".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle {
+            source: Some("transport".into()),
+            path: Some("/".into()),
+            final_url: None,
+            title: None,
+            signal: Some("timeout".into()),
+        },
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::failed("connect failed"),
+            tcp_443: ProbeEvidence::skipped("proxy mode"),
+            tls_443: ProbeEvidence::skipped("proxy mode"),
+            tcp_80: ProbeEvidence::skipped("proxy mode"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 58,
+        http_status: None,
+        reason: "timeout".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison.reason.starts_with("transport ambiguity:"));
+}
+
+#[test]
+fn comparison_report_summarizes_needs_review_breakdown() {
+    let comparisons = vec![
+        ComparisonResult {
+            domain: "control.example".into(),
+            service: None,
+            service_role: None,
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ManualReview,
+            local_confidence: 75,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::NeedsReview,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: vec!["control direct signal is weak: verdict=accessible confidence=65".into()],
+            reason: "control-path ambiguity: control side is too weak to separate local blocking from broader failure".into(),
+        },
+        ComparisonResult {
+            domain: "transport.example".into(),
+            service: None,
+            service_role: None,
+            local_verdict: Verdict::Unreachable,
+            local_routing_decision: RoutingDecision::ManualReview,
+            local_confidence: 40,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Unreachable,
+            control_routing_decision: RoutingDecision::ManualReview,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::NeedsReview,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "transport ambiguity: both local and control paths are too noisy to classify confidently".into(),
+        },
+    ];
+
+    let report_path = std::env::temp_dir().join("bulbascan-comparison-needs-review-breakdown.txt");
+    super::comparison::write_control_comparison_report(&comparisons, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("Needs review breakdown"));
+    assert!(report.contains("control_path_ambiguity: 1"));
+    assert!(report.contains("transport_ambiguity: 1"));
+}
+
+#[test]
 fn comparison_preserves_side_specific_evidence() {
     let local = ScanResult {
         domain: "example.com".into(),
