@@ -45,7 +45,7 @@ Everything in `simple`, plus:
 | `comparison_report.txt` | Local-vs-control comparison report, when `--control-proxy` is used |
 | `confirmed_proxy_required.txt` | Domains confirmed by dual-vantage comparison |
 | `control_proxy_health.txt` | Control-proxy preflight report |
-| `service_geo_report.txt` | Service-level geo summary from comparison results |
+| `service_geo_report.txt` | Service-level geo summary from comparison results, including service publication tiers |
 | `strict-*` files | Strict exports based only on confirmed dual-vantage results |
 | `known-service-bundle-*` files | Minimal host bundles for known services |
 | `generic-apex-bypass-*` files | Apex-level exports for unmapped proxy-required domains |
@@ -62,6 +62,7 @@ Adds validation output on top of `router`.
 
 - what is safe to publish now via `strict-*` exports
 - what should remain in review (`candidate_proxy_required`, `manual_review`, incomplete service bundles)
+- which service bundles are `strict_publishable`, `review_only`, or `direct_only`
 
 ---
 

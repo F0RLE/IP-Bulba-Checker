@@ -799,15 +799,25 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
     summaries
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn write_service_geo_report(
     summaries: &[ServiceGeoSummary],
     output_path: &Path,
 ) -> anyhow::Result<()> {
     let mut counts = BTreeMap::<&str, usize>::new();
+    let mut publishable_services = Vec::new();
+    let mut review_services = Vec::new();
+    let mut direct_services = Vec::new();
     for summary in summaries {
         *counts
             .entry(service_geo_decision_label(summary.decision))
             .or_default() += 1;
+        match service_publication_tier(summary) {
+            "strict_publishable" => publishable_services.push(summary.service.clone()),
+            "review_only" => review_services.push(summary.service.clone()),
+            "direct_only" => direct_services.push(summary.service.clone()),
+            _ => {}
+        }
     }
 
     let mut report = String::new();
@@ -818,6 +828,23 @@ pub fn write_service_geo_report(
     for (decision, count) in counts {
         writeln!(&mut report, "- {decision}: {count}")?;
     }
+    writeln!(&mut report)?;
+    writeln!(&mut report, "Publication guidance")?;
+    writeln!(
+        &mut report,
+        "- strict_publishable_services: {}",
+        format_report_list(&publishable_services)
+    )?;
+    writeln!(
+        &mut report,
+        "- review_only_services: {}",
+        format_report_list(&review_services)
+    )?;
+    writeln!(
+        &mut report,
+        "- direct_only_services: {}",
+        format_report_list(&direct_services)
+    )?;
 
     let sections = [
         (
@@ -877,9 +904,10 @@ pub fn write_service_geo_report(
 
             writeln!(
                 &mut report,
-                "- {} [{}%] roles={} missing_critical={} confirmed={} candidates={} review_assisted={} direct={} {}",
+                "- {} [{}%] publish_tier={} roles={} missing_critical={} confirmed={} candidates={} review_assisted={} direct={} {}",
                 item.service,
                 item.confidence,
+                service_publication_tier(item),
                 observed_roles,
                 missing_critical,
                 confirmed,
@@ -895,11 +923,31 @@ pub fn write_service_geo_report(
     Ok(())
 }
 
+fn service_publication_tier(summary: &ServiceGeoSummary) -> &'static str {
+    if summary.decision == ServiceGeoDecision::ConfirmedGeoBlocked
+        && summary.missing_critical_roles.is_empty()
+    {
+        "strict_publishable"
+    } else if summary.decision == ServiceGeoDecision::DirectOk {
+        "direct_only"
+    } else {
+        "review_only"
+    }
+}
+
 fn format_roles(roles: &[String]) -> String {
     if roles.is_empty() {
         "-".to_string()
     } else {
         roles.join(", ")
+    }
+}
+
+fn format_report_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
     }
 }
 

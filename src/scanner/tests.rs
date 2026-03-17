@@ -293,6 +293,60 @@ fn manual_review_hotspot_report_distinguishes_control_ambiguity_and_transport_no
 
     assert!(report.contains("control_path_ambiguity: 1"));
     assert!(report.contains("transport_failure: 1"));
+    assert!(report.contains("guidance: control-path ambiguity means the comparison side is too weak"));
+}
+
+#[test]
+fn service_geo_report_includes_publication_tiers() {
+    let summaries = vec![
+        ServiceGeoSummary {
+            service: "StrictService".into(),
+            decision: ServiceGeoDecision::ConfirmedGeoBlocked,
+            confidence: 98,
+            observed_roles: vec!["web".into(), "api".into()],
+            missing_critical_roles: Vec::new(),
+            confirmed_hosts: vec!["strict.example".into()],
+            candidate_hosts: Vec::new(),
+            review_assisted_hosts: Vec::new(),
+            direct_hosts: Vec::new(),
+            reason: "confirmed".into(),
+        },
+        ServiceGeoSummary {
+            service: "ReviewService".into(),
+            decision: ServiceGeoDecision::LikelyGeoBlocked,
+            confidence: 82,
+            observed_roles: vec!["web".into()],
+            missing_critical_roles: vec!["api".into()],
+            confirmed_hosts: Vec::new(),
+            candidate_hosts: vec!["review.example".into()],
+            review_assisted_hosts: Vec::new(),
+            direct_hosts: Vec::new(),
+            reason: "partial".into(),
+        },
+        ServiceGeoSummary {
+            service: "DirectService".into(),
+            decision: ServiceGeoDecision::DirectOk,
+            confidence: 88,
+            observed_roles: vec!["web".into()],
+            missing_critical_roles: Vec::new(),
+            confirmed_hosts: Vec::new(),
+            candidate_hosts: Vec::new(),
+            review_assisted_hosts: Vec::new(),
+            direct_hosts: vec!["direct.example".into()],
+            reason: "direct".into(),
+        },
+    ];
+
+    let report_path = std::env::temp_dir().join("bulbascan-service-geo-publication-test.txt");
+    super::comparison::write_service_geo_report(&summaries, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("Publication guidance"));
+    assert!(report.contains("strict_publishable_services: StrictService"));
+    assert!(report.contains("review_only_services: ReviewService"));
+    assert!(report.contains("direct_only_services: DirectService"));
+    assert!(report.contains("publish_tier=strict_publishable"));
 }
 
 #[test]
