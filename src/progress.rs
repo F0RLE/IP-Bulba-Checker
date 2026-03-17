@@ -86,6 +86,17 @@ fn stderr_supports_ansi() -> bool {
     }
 }
 
+fn smoothed_speed(current_pos: u64, first_pos: u64, elapsed: Duration) -> Option<u64> {
+    let nanos = elapsed.as_nanos();
+    if nanos == 0 {
+        return None;
+    }
+
+    let delta = u128::from(current_pos.saturating_sub(first_pos));
+    let rounded_per_sec = (delta * 1_000_000_000_u128 + nanos / 2) / nanos;
+    Some(u64::try_from(rounded_per_sec).unwrap_or(u64::MAX))
+}
+
 // ─── public API ───────────────────────────────────────────────────────────────
 
 pub struct LiveBar {
@@ -194,6 +205,7 @@ impl LiveBar {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render(&self, spinner: &str) {
         let (cols, _) = terminal::size().unwrap_or((120, 30));
         let cols = cols as usize;
@@ -222,9 +234,11 @@ impl LiveBar {
             }
 
             if let Some(&(first_t, first_pos)) = history.first() {
-                let dt = now.saturating_duration_since(first_t).as_secs_f64();
-                if dt >= 0.25 {
-                    speed = (pos.saturating_sub(first_pos) as f64 / dt).round() as u64;
+                let dt = now.saturating_duration_since(first_t);
+                if dt >= Duration::from_millis(250)
+                    && let Some(next_speed) = smoothed_speed(pos, first_pos, dt)
+                {
+                    speed = next_speed;
                     self.speed_value.store(speed, Ordering::Relaxed);
                 }
             }

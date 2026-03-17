@@ -209,20 +209,7 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
             verdict_label(local.verdict),
             verdict_label(control.verdict)
         ),
-        ComparisonDecision::NeedsReview => {
-            if local.routing_decision != RoutingDecision::DirectOk
-                && control.routing_decision != RoutingDecision::DirectOk
-                && control_blocked_is_weak
-            {
-                classify_needs_review_reason(local, control)
-            } else if control.routing_decision == RoutingDecision::DirectOk
-                && !control_supports_direct
-            {
-                classify_needs_review_reason(local, control)
-            } else {
-                classify_needs_review_reason(local, control)
-            }
-        }
+        ComparisonDecision::NeedsReview => classify_needs_review_reason(local, control),
     };
     let reason = if network_notes.is_empty() {
         reason
@@ -350,6 +337,7 @@ pub fn compare_with_control(
     comparisons
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn write_control_comparison_report(
     comparisons: &[ComparisonResult],
     output_path: &Path,

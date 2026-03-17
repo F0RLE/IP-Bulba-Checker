@@ -35,16 +35,17 @@ fn existing_path(path: impl Into<PathBuf>) -> Option<PathBuf> {
 
 fn path_exts() -> Vec<String> {
     if cfg!(target_os = "windows") {
-        std::env::var_os("PATHEXT")
-            .map(|value| {
+        std::env::var_os("PATHEXT").map_or_else(
+            || vec![".exe".into(), ".cmd".into(), ".bat".into()],
+            |value| {
                 value
                     .to_string_lossy()
                     .split(';')
                     .filter(|ext| !ext.is_empty())
-                    .map(|ext| ext.to_ascii_lowercase())
+                    .map(str::to_ascii_lowercase)
                     .collect()
-            })
-            .unwrap_or_else(|| vec![".exe".into(), ".cmd".into(), ".bat".into()])
+            },
+        )
     } else {
         Vec::new()
     }
@@ -52,8 +53,14 @@ fn path_exts() -> Vec<String> {
 
 fn candidate_file_names(name: &str) -> Vec<String> {
     if cfg!(target_os = "windows") {
-        let lower = name.to_ascii_lowercase();
-        let has_ext = lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat");
+        let has_ext = Path::new(name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("exe")
+                    || ext.eq_ignore_ascii_case("cmd")
+                    || ext.eq_ignore_ascii_case("bat")
+            });
         if has_ext {
             vec![name.to_string()]
         } else {
@@ -267,7 +274,7 @@ pub(crate) async fn run_browser_dom_dump(
     };
 
     let handler_task: JoinHandle<()> =
-        tokio::task::spawn(async move { while let Some(_) = handler.next().await {} });
+        tokio::task::spawn(async move { while handler.next().await.is_some() {} });
 
     let page_result = async {
         let page = browser.new_page("about:blank").await?;
