@@ -206,7 +206,12 @@ async fn main() -> anyhow::Result<()> {
     let service_geo_report_path = args.results_dir.join("service_geo_report.txt");
     let validation_report_path = args.results_dir.join("validation_report.txt");
     let strict_sing_box_rule_set_path = args.results_dir.join("strict-sing-box-rule-set.json");
+    let strict_sing_box_binary_rule_set_path =
+        args.results_dir.join("strict-sing-box-rule-set.srs");
     let strict_sing_box_route_path = args.results_dir.join("strict-sing-box-route-snippet.json");
+    let strict_sing_box_binary_route_path = args
+        .results_dir
+        .join("strict-sing-box-binary-route-snippet.json");
     let strict_xray_route_path = args.results_dir.join("strict-xray-routing-rule.json");
     let strict_openwrt_pbr_path = args.results_dir.join("strict-openwrt-pbr-domains.txt");
     let strict_openwrt_dnsmasq_path = args.results_dir.join("strict-openwrt-dnsmasq-ipset.conf");
@@ -822,14 +827,20 @@ async fn main() -> anyhow::Result<()> {
                 &confirmed_proxy_required_path,
                 &service_geo_report_path,
                 &strict_sing_box_rule_set_path,
+                &strict_sing_box_binary_rule_set_path,
                 &strict_sing_box_route_path,
+                &strict_sing_box_binary_route_path,
                 &strict_xray_route_path,
                 &strict_openwrt_pbr_path,
                 &strict_openwrt_dnsmasq_path,
                 &args.results_dir.join("known-service-bundle-rule-set.json"),
+                &args.results_dir.join("known-service-bundle-rule-set.srs"),
                 &args
                     .results_dir
                     .join("known-service-bundle-route-snippet.json"),
+                &args
+                    .results_dir
+                    .join("known-service-bundle-binary-route-snippet.json"),
                 &args
                     .results_dir
                     .join("known-service-bundle-xray-routing-rule.json"),
@@ -840,9 +851,13 @@ async fn main() -> anyhow::Result<()> {
                     .results_dir
                     .join("known-service-bundle-dnsmasq-ipset.conf"),
                 &args.results_dir.join("generic-apex-bypass-rule-set.json"),
+                &args.results_dir.join("generic-apex-bypass-rule-set.srs"),
                 &args
                     .results_dir
                     .join("generic-apex-bypass-route-snippet.json"),
+                &args
+                    .results_dir
+                    .join("generic-apex-bypass-binary-route-snippet.json"),
                 &args
                     .results_dir
                     .join("generic-apex-bypass-xray-routing-rule.json"),
