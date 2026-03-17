@@ -340,6 +340,10 @@ mod tests {
         let google_auth = match_target("accounts.google.com").unwrap();
         assert_eq!(google_auth.service_name, "Google");
         assert_eq!(google_auth.host_role, "auth");
+
+        let yandex_auth = match_target("passport.yandex.ru").unwrap();
+        assert_eq!(yandex_auth.service_name, "Yandex");
+        assert_eq!(yandex_auth.host_role, "auth");
     }
 
     #[test]
@@ -395,6 +399,11 @@ mod tests {
         assert_eq!(reddit.host_role, "web");
         assert!(reddit.satisfies_roles.iter().any(|role| role == "auth"));
 
+        let vk = match_target("vk.com").unwrap();
+        assert_eq!(vk.service_name, "VK");
+        assert_eq!(vk.host_role, "web");
+        assert!(vk.satisfies_roles.iter().any(|role| role == "auth"));
+
         let playstation_api = match_target("playstation.net").unwrap();
         assert_eq!(playstation_api.service_name, "PlayStation");
         assert_eq!(playstation_api.host_role, "api");
@@ -428,6 +437,18 @@ mod tests {
 
         let tiktok = match_target("tiktok.com").unwrap();
         assert!(tiktok.satisfies_roles.iter().any(|role| role == "app"));
+
+        let ozon_seller = match_target("seller.ozon.ru").unwrap();
+        assert_eq!(ozon_seller.service_name, "Ozon");
+        assert_eq!(ozon_seller.host_role, "seller");
+
+        let wildberries_seller = match_target("seller.wildberries.ru").unwrap();
+        assert_eq!(wildberries_seller.service_name, "Wildberries");
+        assert_eq!(wildberries_seller.host_role, "seller");
+
+        let mail_auth = match_target("account.mail.ru").unwrap();
+        assert_eq!(mail_auth.service_name, "Mail");
+        assert_eq!(mail_auth.host_role, "auth");
     }
 
     #[test]

@@ -144,6 +144,128 @@ probe_paths = ["/"]
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[services]]
+name = "Yandex"
+browser_verification = false
+expected_roles = ["search", "auth", "market", "music"]
+critical_roles  = ["search", "auth"]
+
+[[services.hosts]]
+domain = "yandex.ru"
+role   = "search"
+probe_paths = ["/", "/search/?text=bulbascan"]
+
+[[services.hosts]]
+domain = "passport.yandex.ru"
+role   = "auth"
+probe_paths = ["/auth", "/profile"]
+
+[[services.hosts]]
+domain = "id.yandex.ru"
+role   = "auth"
+probe_paths = ["/", "/security"]
+
+[[services.hosts]]
+domain = "market.yandex.ru"
+role   = "market"
+probe_paths = ["/", "/catalog--elektronika/54440"]
+
+[[services.hosts]]
+domain = "music.yandex.ru"
+role   = "music"
+probe_paths = ["/home", "/users/me/tracks"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "VK"
+browser_verification = true
+expected_roles = ["web", "auth", "video"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "vk.com"
+role   = "web"
+probe_paths = ["/", "/feed"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "id.vk.com"
+role   = "auth"
+probe_paths = ["/about/business/go/docs/ru/vkid/latest/vk-id/connection/create-application", "/about/business/go/vk-id"]
+
+[[services.hosts]]
+domain = "vkvideo.ru"
+role   = "video"
+probe_paths = ["/", "/video"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Ozon"
+browser_verification = true
+expected_roles = ["web", "seller", "seller_api"]
+critical_roles  = ["web"]
+
+[[services.hosts]]
+domain = "ozon.ru"
+role   = "web"
+probe_paths = ["/", "/category/elektronika-15500/"]
+
+[[services.hosts]]
+domain = "seller.ozon.ru"
+role   = "seller"
+probe_paths = ["/", "/media/"]
+
+[[services.hosts]]
+domain = "api-seller.ozon.ru"
+role   = "seller_api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Wildberries"
+browser_verification = true
+expected_roles = ["web", "seller"]
+critical_roles  = ["web"]
+
+[[services.hosts]]
+domain = "wildberries.ru"
+role   = "web"
+probe_paths = ["/", "/catalog/0/search.aspx"]
+
+[[services.hosts]]
+domain = "seller.wildberries.ru"
+role   = "seller"
+probe_paths = ["/", "/about-portal/ru"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Mail"
+browser_verification = false
+expected_roles = ["mail", "auth", "cloud"]
+critical_roles  = ["mail", "auth"]
+
+[[services.hosts]]
+domain = "mail.ru"
+role   = "mail"
+probe_paths = ["/", "/inbox/"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "account.mail.ru"
+role   = "auth"
+probe_paths = ["/login", "/signup"]
+
+[[services.hosts]]
+domain = "cloud.mail.ru"
+role   = "cloud"
+probe_paths = ["/home/", "/attaches/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
 name = "Google"
 browser_verification = false
 expected_roles = ["search", "auth", "account", "play"]

@@ -79,7 +79,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 | Browser verification | Local browser confirmation for challenge-heavy and script-dependent targets |
 | Signature engine | Aho-Corasick on body/header/API patterns with specificity scoring |
 | RU/BY ISP detection | Rostelecom, Beltelecom, MTS, Beeline, Megafon, TTK block pages |
-| 32 service profiles | Editable via `profiles.toml` — no recompilation |
+| 37 service profiles | Editable via `profiles.toml` — no recompilation |
 | Control-proxy comparison | Dual-vantage: local vs proxy → highest-confidence geo detection |
 | Incremental state | Resume interrupted scans |
 | Multi-format export | `geosite.dat`, sing-box, Xray, OpenWRT PBR + dnsmasq |
