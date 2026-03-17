@@ -369,12 +369,21 @@ The state directory maintains:
 - `blocked.txt`
 - `direct.txt`
 - `manual_review.txt`
+- `rescan-hot.txt`
+- `rescan-warm.txt`
+- `rescan-cold.txt`
 
 On later runs:
 
 - known `blocked` and `direct` domains are skipped
 - `manual_review` domains are revisited
 - `--refresh-known` forces a recheck of already-known domains
+
+For incremental publication:
+
+- `publish-strict-domains.txt` is the publication-grade tier
+- `publish-review-domains.txt` is the holdback tier for later refresh cycles
+- `publication_report.txt` explains what is safe to publish now and what still belongs in review
 
 ---
 

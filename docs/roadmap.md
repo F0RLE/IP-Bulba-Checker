@@ -107,9 +107,12 @@ Near-term priorities are therefore:
     - service publication tiers in `service_geo_report.txt`
 
 - **Incremental Publishing Workflow**
-  - Publish strict artifacts from the confirmed comparison set on short intervals.
-  - Keep broader local-only proxy candidates in a lower-trust tier until they survive later refresh cycles.
-  - Support hot / warm / cold rescan queues for very large domain universes instead of trying to refresh everything every cycle.
+  - Current status: completed for the current scope.
+  - Implemented:
+    - publication tiers (`publish-strict`, `publish-review`, `publish-direct`)
+    - operator-facing `publication_report.txt`
+    - hot / warm / cold rescan queue files
+    - queue persistence into `--state-dir` for later cycles
 
 - **Cross-platform runtime hardening**
   - Improve browser auto-detection so Windows, macOS, and Linux builds can find Chrome / Chromium / Edge more reliably.
