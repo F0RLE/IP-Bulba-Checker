@@ -101,6 +101,65 @@ bulbascan --fetch-radar 500
 
 ---
 
+## Global Configuration
+
+Bulbascan can load defaults from `bulbascan.toml`.
+
+Config precedence is:
+
+1. CLI flags and environment-backed CLI values
+2. `bulbascan.toml`
+3. built-in defaults
+
+Config loading behavior:
+
+- auto-loads `./bulbascan.toml` if it exists
+- `--config FILE` loads an explicit file
+- `--no-config` disables config loading entirely
+
+Use config for persistent defaults like:
+
+- proxies
+- control proxy
+- timeouts
+- export profile
+- results directory
+- state directory
+
+Keep one-shot inputs on the CLI:
+
+- positional domain files
+- `--fetch-radar`
+- `--import-geosite`
+- `--emit-xray-socks-config`
+
+Example:
+
+```toml
+[scan]
+concurrency = 80
+timeout = 8
+profile = "safe"
+
+[comparison]
+control_proxy = "http://user:pass@proxy:port"
+state_dir = "state"
+
+[output]
+export_profile = "full"
+results_dir = "results"
+```
+
+Example run:
+
+```sh
+bulbascan domains.txt
+bulbascan --config ./bulbascan.toml domains.txt
+bulbascan --no-config domains.txt --timeout 5
+```
+
+---
+
 ## Recommended Run Modes
 
 These presets are the practical starting points for selective-proxy work.

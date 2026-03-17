@@ -1,0 +1,23 @@
+[scan]
+concurrency = 80
+timeout = 8
+max_redirects = 10
+profile = "safe"
+max_body_size = 131072
+
+[network]
+proxy = "socks5h://127.0.0.1:1080"
+
+[comparison]
+control_proxy = "http://user:pass@proxy:port"
+state_dir = "state"
+refresh_known = true
+
+[output]
+export_profile = "full"
+results_dir = "results"
+blocked_list_format = "plain"
+geosite_category = "blocked"
+
+[ui]
+ascii_only = false

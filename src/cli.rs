@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
+use serde::Deserialize;
 
 use crate::validation;
 
@@ -127,7 +128,8 @@ pub(crate) fn default_results_dir_for_input(file: &std::path::Path) -> PathBuf {
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
 /// Scan depth profile.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum ScanProfileArg {
     /// Quieter profile — fewer probes, fewer retries.
     Safe,
@@ -145,7 +147,8 @@ impl ScanProfileArg {
 }
 
 /// Output export profile.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum ExportProfileArg {
     /// Minimal: blocked-domains.txt + geosite.dat only.
     Simple,
@@ -156,7 +159,8 @@ pub(crate) enum ExportProfileArg {
 }
 
 /// Format of the plain blocked-domain list.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum BlockedListFormatArg {
     /// One domain per line.
     Plain,
@@ -186,6 +190,14 @@ impl BlockedListFormatArg {
     after_help = "Common examples:\n  bulbascan.exe my-list.txt\n  bulbascan.exe geosite.dat --import-geosite-category ru-blocked\n  bulbascan.exe geosite1.dat geosite2.dat list.txt --import-geosite-category blocked\n  bulbascan.exe geo_validation_set.txt --control-proxy http://user:pass@host:port --export-profile full"
 )]
 pub(crate) struct Args {
+    /// Optional path to a bulbascan.toml configuration file
+    #[arg(long, value_name = "FILE")]
+    pub(crate) config: Option<PathBuf>,
+
+    /// Ignore automatic config file loading
+    #[arg(long, default_value_t = false)]
+    pub(crate) no_config: bool,
+
     /// One or more input files: .dat files are read as geosite.dat (binary), text files as domain lists.
     /// On Windows you can select multiple files and drag them all onto the EXE at once.
     #[arg(default_value = "targets.txt", num_args = 1..)]

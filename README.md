@@ -56,6 +56,11 @@ bulbascan domains.txt -x http://user:pass@proxy:port --export-profile router --s
 bulbascan geosite.dat --import-geosite-category ru-blocked
 ```
 
+**Load defaults from `bulbascan.toml`:**
+```sh
+bulbascan --config ./bulbascan.toml domains.txt
+```
+
 ## Use Cases
 - **Smart Routing (Selective Proxy):** Generate routing inputs that proxy likely blocked services while keeping likely direct traffic local.
 - **Home Routers:** Export directly to OpenWRT / dnsmasq formats for network-wide bypass.
@@ -83,6 +88,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked
 | Control-proxy comparison | Dual-vantage: local vs proxy → highest-confidence geo detection |
 | Incremental state | Resume interrupted scans |
 | Multi-format export | `geosite.dat`, sing-box, Xray, OpenWRT PBR + dnsmasq |
+| Global configuration | Optional `bulbascan.toml` with `CLI > config > built-in defaults` precedence |
 | Dynamic concurrency | `→`/`←` tier jump, `↑`/`↓` ±1 workers, `q` cancel |
 | Stable throughput metrics | 3-second moving average speed smoothing for less jumpy `/s` and ETA |
 
