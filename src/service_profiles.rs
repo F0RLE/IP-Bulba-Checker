@@ -2,7 +2,7 @@
 //!
 //! Profiles are loaded from a `profiles.toml` file located next to the binary at
 //! startup. If the file is absent, the compiled-in copy is used as a fallback.
-//! This means all 60+ service profiles can be updated by editing `profiles.toml`
+//! This means all bundled service profiles can be updated by editing `profiles.toml`
 //! without recompiling.
 //!
 //! # Extension
@@ -336,6 +336,10 @@ mod tests {
         let perplexity_api = match_target("api.perplexity.ai").unwrap();
         assert_eq!(perplexity_api.service_name, "Perplexity");
         assert_eq!(perplexity_api.host_role, "api");
+
+        let google_auth = match_target("accounts.google.com").unwrap();
+        assert_eq!(google_auth.service_name, "Google");
+        assert_eq!(google_auth.host_role, "auth");
     }
 
     #[test]
@@ -352,6 +356,20 @@ mod tests {
         assert_eq!(deezer_auth.service_name, "Deezer");
         assert_eq!(deezer_auth.host_role, "auth");
 
+        let youtube_creator = match_target("studio.youtube.com").unwrap();
+        assert_eq!(youtube_creator.service_name, "YouTube");
+        assert_eq!(youtube_creator.host_role, "creator");
+
+        let netflix = match_target("netflix.com").unwrap();
+        assert_eq!(netflix.service_name, "Netflix");
+        assert_eq!(netflix.host_role, "storefront");
+        assert!(
+            netflix
+                .satisfies_roles
+                .iter()
+                .any(|role| role == "playback")
+        );
+
         let tidal_auth = match_target("login.tidal.com").unwrap();
         assert_eq!(tidal_auth.service_name, "TIDAL");
         assert_eq!(tidal_auth.host_role, "auth");
@@ -366,6 +384,16 @@ mod tests {
         let instagram_assets = match_target("cdninstagram.com").unwrap();
         assert_eq!(instagram_assets.service_name, "Meta");
         assert_eq!(instagram_assets.host_role, "assets");
+
+        let x = match_target("x.com").unwrap();
+        assert_eq!(x.service_name, "X");
+        assert_eq!(x.host_role, "web");
+        assert!(x.satisfies_roles.iter().any(|role| role == "auth"));
+
+        let reddit = match_target("reddit.com").unwrap();
+        assert_eq!(reddit.service_name, "Reddit");
+        assert_eq!(reddit.host_role, "web");
+        assert!(reddit.satisfies_roles.iter().any(|role| role == "auth"));
 
         let playstation_api = match_target("playstation.net").unwrap();
         assert_eq!(playstation_api.service_name, "PlayStation");

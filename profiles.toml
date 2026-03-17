@@ -141,6 +141,135 @@ domain = "api.perplexity.ai"
 role   = "api"
 probe_paths = ["/"]
 
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Google"
+browser_verification = false
+expected_roles = ["search", "auth", "account", "play"]
+critical_roles  = ["search", "auth"]
+
+[[services.hosts]]
+domain = "google.com"
+role   = "search"
+probe_paths = ["/", "/search?q=bulbascan"]
+
+[[services.hosts]]
+domain = "accounts.google.com"
+role   = "auth"
+probe_paths = ["/", "/ServiceLogin"]
+
+[[services.hosts]]
+domain = "myaccount.google.com"
+role   = "account"
+probe_paths = ["/", "/intro/personal-info"]
+
+[[services.hosts]]
+domain = "play.google.com"
+role   = "play"
+probe_paths = ["/", "/store"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "YouTube"
+browser_verification = true
+expected_roles = ["web", "creator", "embed"]
+critical_roles  = ["web", "creator"]
+
+[[services.hosts]]
+domain = "youtube.com"
+role   = "web"
+probe_paths = ["/", "/feed/trending"]
+
+[[services.hosts]]
+domain = "m.youtube.com"
+role   = "web"
+probe_paths = ["/", "/feed/trending"]
+
+[[services.hosts]]
+domain = "studio.youtube.com"
+role   = "creator"
+probe_paths = ["/", "/channel/UC"]
+
+[[services.hosts]]
+domain = "youtu.be"
+role   = "embed"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "X"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "x.com"
+role   = "web"
+probe_paths = ["/", "/explore"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "twitter.com"
+role   = "web"
+probe_paths = ["/", "/explore"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "developer.x.com"
+role   = "auth"
+probe_paths = ["/", "/en"]
+
+[[services.hosts]]
+domain = "api.x.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Reddit"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "reddit.com"
+role   = "web"
+probe_paths = ["/", "/r/popular"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "www.reddit.com"
+role   = "auth"
+probe_paths = ["/login/", "/register/"]
+
+[[services.hosts]]
+domain = "api.reddit.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Netflix"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "netflix.com"
+role   = "storefront"
+probe_paths = ["/", "/browse", "/login"]
+satisfies_roles = ["auth", "playback"]
+
+[[services.hosts]]
+domain = "www.netflix.com"
+role   = "playback"
+probe_paths = ["/", "/browse"]
+
 # ─── Financial ────────────────────────────────────────────────────────────────
 
 [[services]]
