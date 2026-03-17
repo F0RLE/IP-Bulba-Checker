@@ -38,7 +38,7 @@ Bulbascan is a Rust CLI for high-speed selective-proxy scanning, geo-block detec
   5. run `cargo fmt`, `cargo check`, and `cargo test`
   6. update `docs/roadmap.md` if the feature status changed
   7. open a PR into `nightly`
-- Use the `F0RLE/feature/<name>` branch naming pattern.
+- Use the `<your-name>/feature/<name>` branch naming pattern.
 - Do not bundle unrelated cleanup into a feature PR unless it is truly incidental and low risk.
 - If local unrelated changes already exist, review them separately and commit them separately.
 - Prefer strict, reviewable increments over large “finish everything at once” branches.
