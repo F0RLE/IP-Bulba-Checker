@@ -155,6 +155,37 @@ pub(crate) fn classify_status_code(code: u16) -> Option<Evidence> {
     })
 }
 
+fn classify_challenge_headers(headers: &[(String, String)]) -> Option<Evidence> {
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.to_ascii_lowercase())
+    };
+
+    if header("cf-mitigated").as_deref() == Some("challenge") {
+        return Some(Evidence {
+            verdict: Verdict::Captcha,
+            reason: "Header: cf-mitigated=challenge".to_string(),
+            block_type: Some(signatures::BlockType::Captcha),
+            confidence: 94,
+        });
+    }
+
+    if let Some(action) = header("x-amzn-waf-action")
+        && matches!(action.as_str(), "captcha" | "challenge")
+    {
+        return Some(Evidence {
+            verdict: Verdict::Captcha,
+            reason: format!("Header: x-amzn-waf-action={action}"),
+            block_type: Some(signatures::BlockType::Captcha),
+            confidence: 92,
+        });
+    }
+
+    None
+}
+
 pub(crate) fn classify_redirect(url: &str) -> Option<Evidence> {
     let lower = url.to_ascii_lowercase();
     let parsed = url::Url::parse(url).ok();
@@ -517,6 +548,11 @@ pub(crate) fn analyze_http_observation(
     let body_text = String::from_utf8_lossy(body_raw).into_owned();
     let title = extract_title(&body_text);
     let path = path_from_url_like(final_url);
+
+    if let Some(signal) = classify_challenge_headers(headers) {
+        choose_better_signal(&mut best_signal, signal.clone());
+        signals.push(signal);
+    }
 
     // ── Quick Win #1: Status-gated header scoring ──────────────────
     // On 200 OK, CDN-presence headers are informational (confidence 35,
@@ -1016,6 +1052,50 @@ mod infra_tests {
         assert!(is_infra_like_domain("googleapis.com"));
         assert!(is_infra_like_domain("cloudfront.net"));
         assert!(!is_infra_like_domain("chatgpt.com"));
+    }
+
+    #[test]
+    fn cf_mitigated_challenge_header_is_classified_as_captcha() {
+        let matcher = BlockMatcher::new(None).unwrap();
+        let result = analyze_http_observation(
+            "example.com".to_string(),
+            &matcher,
+            403,
+            "Forbidden",
+            "https://example.com/",
+            &[("cf-mitigated".to_string(), "challenge".to_string())],
+            b"",
+            false,
+        );
+
+        assert_eq!(result.verdict, Verdict::Captcha);
+        assert_eq!(
+            result.block_type,
+            Some(crate::signatures::BlockType::Captcha)
+        );
+        assert!(result.reason.contains("cf-mitigated"));
+    }
+
+    #[test]
+    fn aws_waf_captcha_header_is_classified_as_captcha() {
+        let matcher = BlockMatcher::new(None).unwrap();
+        let result = analyze_http_observation(
+            "example.com".to_string(),
+            &matcher,
+            405,
+            "Method Not Allowed",
+            "https://example.com/",
+            &[("x-amzn-waf-action".to_string(), "captcha".to_string())],
+            b"",
+            false,
+        );
+
+        assert_eq!(result.verdict, Verdict::Captcha);
+        assert_eq!(
+            result.block_type,
+            Some(crate::signatures::BlockType::Captcha)
+        );
+        assert!(result.reason.contains("x-amzn-waf-action"));
     }
 
     #[test]
