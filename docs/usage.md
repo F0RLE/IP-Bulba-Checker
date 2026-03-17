@@ -320,6 +320,7 @@ Operational note:
 
 - for very large lists, browser verification is the most expensive confirmation layer
 - `aggressive` now uses a capped browser budget for each scan and limits browser confirmation to at most two paths per domain
+- once a challenge family has already been browser-confirmed in the same run, later domains with the same family can reuse that signal instead of spending more browser budget
 - if you are doing a bulk pass and only need strong routing candidates, prefer `--profile safe`
 - use `--profile aggressive` when you are explicitly trading speed for deeper confirmation
 

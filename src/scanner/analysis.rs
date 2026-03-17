@@ -119,6 +119,62 @@ pub(crate) fn verdict_from_block_type(block_type: signatures::BlockType) -> Verd
     }
 }
 
+fn challenge_family_from_text(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    let families = [
+        (
+            "cloudflare_turnstile",
+            &["cf-turnstile", "turnstile", "cf-mitigated"][..],
+        ),
+        (
+            "cloudflare_challenge",
+            &[
+                "challenge-platform",
+                "cf-challenge",
+                "cf-browser-verification",
+                "checking your browser",
+                "just a moment",
+            ][..],
+        ),
+        ("aws_waf", &["x-amzn-waf-action"][..]),
+        ("datadome", &["datadome", "captcha-delivery"][..]),
+        ("perimeterx", &["px-captcha", "px-cdn.net"][..]),
+        ("kasada", &["kasada", "kpf-challenge"][..]),
+        ("ddos_guard", &["ddos-guard", "__ddg"][..]),
+        ("recaptcha", &["g-recaptcha", "recaptcha/api2"][..]),
+        ("hcaptcha", &["hcaptcha"][..]),
+        ("funcaptcha", &["funcaptcha", "arkoselabs"][..]),
+        ("geetest", &["geetest"][..]),
+    ];
+
+    families.iter().find_map(|(family, needles)| {
+        needles
+            .iter()
+            .any(|needle| lower.contains(needle))
+            .then_some(*family)
+    })
+}
+
+pub(crate) fn infer_challenge_family(result: &ScanResult) -> Option<&'static str> {
+    if !matches!(result.verdict, Verdict::Captcha | Verdict::WafBlocked) {
+        return None;
+    }
+
+    result
+        .evidence
+        .signal
+        .as_deref()
+        .and_then(challenge_family_from_text)
+        .or_else(|| challenge_family_from_text(&result.reason))
+        .or_else(|| {
+            result
+                .evidence
+                .title
+                .as_deref()
+                .and_then(challenge_family_from_text)
+        })
+}
+
 pub(crate) fn status_from_verdict(verdict: Verdict) -> DomainStatus {
     match verdict {
         Verdict::Accessible => DomainStatus::Ok,
@@ -1040,8 +1096,8 @@ pub(crate) fn classify_browser_html(
 mod infra_tests {
     use super::{
         analyze_http_observation, apply_profile_confidence_adjustment, classify_browser_html,
-        is_consumer_like_domain, is_infra_like_domain, is_non_consumer_platform_domain,
-        relax_infra_root_result, stabilize_scan_attempts,
+        infer_challenge_family, is_consumer_like_domain, is_infra_like_domain,
+        is_non_consumer_platform_domain, relax_infra_root_result, stabilize_scan_attempts,
     };
     use crate::scanner::types::build_scan_result;
     use crate::scanner::{DomainStatus, EvidenceBundle, RoutingDecision, Verdict, with_evidence};
@@ -1096,6 +1152,60 @@ mod infra_tests {
             Some(crate::signatures::BlockType::Captcha)
         );
         assert!(result.reason.contains("x-amzn-waf-action"));
+    }
+
+    #[test]
+    fn infers_challenge_family_from_captcha_signal() {
+        let result = with_evidence(
+            build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                Verdict::Captcha,
+                94,
+                Some(403),
+                "Header: cf-mitigated=challenge".to_string(),
+                Some(crate::signatures::BlockType::Captcha),
+            ),
+            EvidenceBundle {
+                source: Some("http".to_string()),
+                path: Some("/".to_string()),
+                final_url: None,
+                title: None,
+                signal: Some("Header: cf-mitigated=challenge".to_string()),
+            },
+        );
+
+        assert_eq!(
+            infer_challenge_family(&result),
+            Some("cloudflare_turnstile")
+        );
+    }
+
+    #[test]
+    fn infers_challenge_family_from_waf_signal() {
+        let result = with_evidence(
+            build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                Verdict::WafBlocked,
+                97,
+                Some(403),
+                "Browser DOM: challenge page".to_string(),
+                Some(crate::signatures::BlockType::Waf),
+            ),
+            EvidenceBundle {
+                source: Some("browser_dom".to_string()),
+                path: Some("/".to_string()),
+                final_url: None,
+                title: Some("Just a moment".to_string()),
+                signal: Some("/cdn-cgi/challenge-platform".to_string()),
+            },
+        );
+
+        assert_eq!(
+            infer_challenge_family(&result),
+            Some("cloudflare_challenge")
+        );
     }
 
     #[test]

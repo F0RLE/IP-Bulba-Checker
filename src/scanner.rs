@@ -1,7 +1,9 @@
 use console::Style;
 use rquest::Client;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::fs::File;
@@ -22,8 +24,8 @@ mod transport;
 pub(crate) mod types;
 use analysis::{
     analyze_http_observation, apply_dns_evidence_adjustment, classify_browser_html,
-    classify_transport_error, relax_infra_root_result, same_measurement, should_try_retest,
-    stabilize_scan_attempts, status_from_verdict, verdict_rank,
+    classify_transport_error, infer_challenge_family, relax_infra_root_result, same_measurement,
+    should_try_retest, stabilize_scan_attempts, status_from_verdict, verdict_rank,
 };
 use browser::{
     browser_proxy_server_arg, detect_browser_binary, run_browser_dom_dump,
@@ -128,6 +130,7 @@ pub async fn run_scan(
             .or_else(detect_browser_binary),
     );
     let browser_budget = Arc::new(AtomicUsize::new(scan_policy.max_browser_verifications));
+    let challenge_family_cache = Arc::new(Mutex::new(HashSet::<String>::new()));
     let proxies = Arc::new(proxies);
     let matcher = Arc::new(signatures::BlockMatcher::new(signatures_file.as_deref())?);
     let proxy_index = Arc::new(AtomicUsize::new(0));
@@ -272,6 +275,7 @@ pub async fn run_scan(
         let tls_connector = tls_connector.clone();
         let browser_binary = browser_binary.clone();
         let browser_budget = browser_budget.clone();
+        let challenge_family_cache = challenge_family_cache.clone();
         let logger_tx = logger_tx.clone();
         let work_rx = work_rx.clone();
         let proxies = proxies.clone();
@@ -312,6 +316,7 @@ pub async fn run_scan(
                                     &tls_connector,
                                     browser_binary.as_deref(),
                                     browser_budget.clone(),
+                                    challenge_family_cache.clone(),
                                     domain.clone(),
                                     &matcher,
                                     proxy.as_ref(),
@@ -591,6 +596,7 @@ async fn scan_domain_once(
     tls_connector: &RustlsTlsConnector,
     browser_binary: Option<&Path>,
     browser_budget: Arc<AtomicUsize>,
+    challenge_family_cache: Arc<Mutex<HashSet<String>>>,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -653,7 +659,19 @@ async fn scan_domain_once(
         }
     }
 
-    if let Some(browser_path) = browser_binary
+    let known_challenge_family = infer_challenge_family(&best_result).and_then(|family| {
+        challenge_family_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.contains(family).then_some(family))
+    });
+
+    if let Some(family) = known_challenge_family {
+        best_result.reason = format!(
+            "{} | browser skipped: reused challenge family={family}",
+            best_result.reason
+        );
+    } else if let Some(browser_path) = browser_binary
         && should_try_browser_verify(&best_result, &domain)
         && (proxy.is_none()
             || (scan_policy.allow_control_browser_verify
@@ -693,6 +711,12 @@ async fn scan_domain_once(
                 best_result = browser_result;
             }
 
+            if let Some(family) = infer_challenge_family(&best_result)
+                && let Ok(mut cache) = challenge_family_cache.lock()
+            {
+                cache.insert(family.to_string());
+            }
+
             if matches!(
                 best_result.verdict,
                 Verdict::GeoBlocked | Verdict::WafBlocked
@@ -715,6 +739,7 @@ async fn scan_domain(
     tls_connector: &RustlsTlsConnector,
     browser_binary: Option<&Path>,
     browser_budget: Arc<AtomicUsize>,
+    challenge_family_cache: Arc<Mutex<HashSet<String>>>,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -731,6 +756,7 @@ async fn scan_domain(
             tls_connector,
             browser_binary,
             browser_budget.clone(),
+            challenge_family_cache.clone(),
             domain.clone(),
             matcher,
             proxy,
@@ -773,6 +799,7 @@ async fn scan_domain(
                 tls_connector,
                 browser_binary,
                 browser_budget.clone(),
+                challenge_family_cache.clone(),
                 domain.clone(),
                 matcher,
                 proxy,
