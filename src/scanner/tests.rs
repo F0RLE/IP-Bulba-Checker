@@ -1349,6 +1349,68 @@ fn single_confirmed_known_role_is_only_likely_when_bundle_is_incomplete() {
 }
 
 #[test]
+fn complete_anthropic_critical_roles_can_confirm_service_blocking() {
+    let comparisons = vec![
+        ComparisonResult {
+            domain: "claude.ai".into(),
+            service: Some("Anthropic".into()),
+            service_role: Some("web".into()),
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ProxyRequired,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::ConfirmedProxyRequired,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "confirmed".into(),
+        },
+        ComparisonResult {
+            domain: "platform.claude.com".into(),
+            service: Some("Anthropic".into()),
+            service_role: Some("console".into()),
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ProxyRequired,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::ConfirmedProxyRequired,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "confirmed".into(),
+        },
+        ComparisonResult {
+            domain: "api.anthropic.com".into(),
+            service: Some("Anthropic".into()),
+            service_role: Some("api".into()),
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ProxyRequired,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::ConfirmedProxyRequired,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "confirmed".into(),
+        },
+    ];
+
+    let summaries = summarize_service_geo(&comparisons);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].decision,
+        ServiceGeoDecision::ConfirmedGeoBlocked
+    );
+    assert!(summaries[0].missing_critical_roles.is_empty());
+}
+
+#[test]
 fn review_assisted_critical_role_can_make_service_likely_geo_blocked() {
     let comparisons = vec![
         ComparisonResult {

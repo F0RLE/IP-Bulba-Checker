@@ -53,7 +53,8 @@ probe_paths = ["/", "/u/login"]
 [[services.hosts]]
 domain = "platform.openai.com"
 role   = "console"
-probe_paths = ["/", "/login"]
+probe_paths = ["/", "/login", "/docs/overview"]
+satisfies_roles = ["auth"]
 
 [[services.hosts]]
 domain = "api.openai.com"
@@ -83,6 +84,11 @@ domain = "claude.ai"
 role   = "web"
 probe_paths = ["/", "/login"]
 satisfies_roles = ["console"]
+
+[[services.hosts]]
+domain = "platform.claude.com"
+role   = "console"
+probe_paths = ["/", "/login"]
 
 [[services.hosts]]
 domain = "console.anthropic.com"
@@ -146,7 +152,7 @@ critical_roles  = ["web", "auth", "api"]
 [[services.hosts]]
 domain = "wise.com"
 role   = "web"
-probe_paths = ["/", "/login"]
+probe_paths = ["/", "/login", "/business", "/business/api"]
 satisfies_roles = ["auth"]
 
 [[services.hosts]]
@@ -263,7 +269,7 @@ satisfies_roles = ["playback"]
 [[services.hosts]]
 domain = "www.disneyplus.com"
 role   = "playback"
-probe_paths = ["/", "/welcome"]
+probe_paths = ["/", "/welcome", "/login"]
 
 [[services.hosts]]
 domain = "auth.disneyplus.com"
@@ -321,24 +327,29 @@ probe_paths = ["/", "/signin"]
 [[services]]
 name = "Deezer"
 browser_verification = true
-expected_roles = ["web", "player", "api"]
+expected_roles = ["web", "player", "api", "auth"]
 critical_roles  = ["web", "player"]
 
 [[services.hosts]]
 domain = "deezer.com"
 role   = "web"
-probe_paths = ["/"]
+probe_paths = ["/", "/login"]
 satisfies_roles = ["player"]
 
 [[services.hosts]]
 domain = "www.deezer.com"
 role   = "player"
-probe_paths = ["/", "/en/channels/explore"]
+probe_paths = ["/", "/en/channels/explore", "/login"]
 
 [[services.hosts]]
 domain = "api.deezer.com"
 role   = "api"
 probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "connect.deezer.com"
+role   = "auth"
+probe_paths = ["/oauth/auth.php", "/login"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -595,12 +606,17 @@ satisfies_roles = ["app"]
 [[services.hosts]]
 domain = "www.tiktok.com"
 role   = "app"
-probe_paths = ["/", "/explore"]
+probe_paths = ["/", "/explore", "/login"]
 
 [[services.hosts]]
 domain = "m.tiktok.com"
 role   = "web"
-probe_paths = ["/", "/explore"]
+probe_paths = ["/", "/explore", "/login"]
+
+[[services.hosts]]
+domain = "developers.tiktok.com"
+role   = "api"
+probe_paths = ["/", "/doc/login/"]
 
 [[services.hosts]]
 domain = "tiktokv.com"

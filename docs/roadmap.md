@@ -38,17 +38,10 @@
   - Current scope: bulk runs now cap total browser confirmations and per-domain browser paths, known challenge headers such as `cf-mitigated: challenge` and `x-amzn-waf-action=captcha|challenge` are labeled more precisely, and repeated browser confirmation is skipped for challenge families already confirmed earlier in the same scan.
 
 - **Service-profile coverage**
-  - Status: in progress
+  - Status: completed
   - Expand `profiles.toml` so major blocked services expose enough critical-role coverage for reliable service-level decisions.
   - Improve per-service reasoning when only partial host coverage is observed.
-  - Current scope: service coverage now supports multi-role hosts for products that expose auth/app/playback on the same public domain, but more host-level coverage is still needed for API- and console-heavy services.
-  - Immediate targets from the latest scan:
-    - OpenAI (`auth`, `api`)
-    - Anthropic (`console`, `api`)
-    - TikTok (`web`, `app`)
-    - Wise (`auth`, `api`)
-    - Disney+ (`playback`)
-    - Deezer (`player`)
+  - Current scope: service coverage now includes multi-role hosts, current official console aliases such as `platform.claude.com`, richer probe paths for login and browser entrypoints, and additional host coverage for API- and auth-adjacent surfaces such as `developers.tiktok.com` and `connect.deezer.com`.
 
 ## Performance & Scale
 

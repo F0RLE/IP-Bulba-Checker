@@ -301,6 +301,7 @@ mod tests {
         let matched = match_target("https://platform.openai.com/login").unwrap();
         assert_eq!(matched.service_name, "OpenAI");
         assert_eq!(matched.host_role, "console");
+        assert!(matched.satisfies_roles.iter().any(|role| role == "auth"));
     }
 
     #[test]
@@ -324,6 +325,10 @@ mod tests {
         assert_eq!(chat.host_role, "web");
         assert!(chat.satisfies_roles.iter().any(|role| role == "auth"));
 
+        let claude_console = match_target("platform.claude.com").unwrap();
+        assert_eq!(claude_console.service_name, "Anthropic");
+        assert_eq!(claude_console.host_role, "console");
+
         let upwork_api = match_target("api.upwork.com").unwrap();
         assert_eq!(upwork_api.service_name, "Upwork");
         assert_eq!(upwork_api.host_role, "api");
@@ -342,6 +347,10 @@ mod tests {
         let disney_auth = match_target("auth.disneyplus.com").unwrap();
         assert_eq!(disney_auth.service_name, "Disney+");
         assert_eq!(disney_auth.host_role, "auth");
+
+        let deezer_auth = match_target("connect.deezer.com").unwrap();
+        assert_eq!(deezer_auth.service_name, "Deezer");
+        assert_eq!(deezer_auth.host_role, "auth");
 
         let tidal_auth = match_target("login.tidal.com").unwrap();
         assert_eq!(tidal_auth.service_name, "TIDAL");
@@ -368,6 +377,10 @@ mod tests {
         let tiktok_api = match_target("tiktokv.com").unwrap();
         assert_eq!(tiktok_api.service_name, "TikTok");
         assert_eq!(tiktok_api.host_role, "api");
+
+        let tiktok_developers = match_target("developers.tiktok.com").unwrap();
+        assert_eq!(tiktok_developers.service_name, "TikTok");
+        assert_eq!(tiktok_developers.host_role, "api");
 
         let tiktok_www = match_target("www.tiktok.com").unwrap();
         assert_eq!(tiktok_www.service_name, "TikTok");
