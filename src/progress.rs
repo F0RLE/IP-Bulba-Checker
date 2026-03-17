@@ -5,6 +5,7 @@
 //! * Written to stderr. Cursor hidden while active. ASCII-safe bar chars.
 
 use crossterm::terminal;
+use std::io::IsTerminal;
 use std::io::{self, Write};
 use std::sync::{
     Arc, Mutex,
@@ -67,6 +68,24 @@ fn tier(n: usize) -> &'static str {
     }
 }
 
+fn stderr_supports_ansi() -> bool {
+    if !io::stderr().is_terminal() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        crossterm::ansi_support::supports_ansi()
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var("TERM")
+            .map(|term| !term.eq_ignore_ascii_case("dumb"))
+            .unwrap_or(true)
+    }
+}
+
 // ─── public API ───────────────────────────────────────────────────────────────
 
 pub struct LiveBar {
@@ -81,6 +100,7 @@ pub struct LiveBar {
     out: Arc<Mutex<io::Stderr>>,
     potato: bool,
     output_display: String,
+    ansi_enabled: bool,
     /// Terminal width from the previous render tick.
     prev_cols: Arc<AtomicUsize>,
     speed_history: Mutex<Vec<(Instant, u64)>>,
@@ -106,6 +126,7 @@ impl LiveBar {
             out: Arc::new(Mutex::new(io::stderr())),
             potato,
             output_display,
+            ansi_enabled: stderr_supports_ansi(),
             prev_cols: Arc::new(AtomicUsize::new(0)),
             speed_history: Mutex::new(Vec::with_capacity(32)),
             speed_value: AtomicU64::new(0),
@@ -115,8 +136,12 @@ impl LiveBar {
     /// Print a log line — clears current bar line, prints msg, bar redraws next tick.
     pub fn println(&self, msg: impl AsRef<str>) {
         let mut o = self.out.lock().unwrap();
-        // Go up past the profile line, clear it, print msg, leave cursor for bar tick.
-        write!(o, "\x1b[1A\r\x1b[2K{}\n\n", msg.as_ref()).ok();
+        if self.ansi_enabled {
+            // Go up past the profile line, clear it, print msg, leave cursor for bar tick.
+            write!(o, "\x1b[1A\r\x1b[2K{}\n\n", msg.as_ref()).ok();
+        } else {
+            writeln!(o, "{}", msg.as_ref()).ok();
+        }
         o.flush().ok();
     }
 
@@ -124,7 +149,11 @@ impl LiveBar {
         self.stopped.store(true, Ordering::SeqCst);
         std::thread::sleep(Duration::from_millis(150));
         let mut o = self.out.lock().unwrap();
-        write!(o, "\x1b[?25h\r\x1b[2K{}\n", msg.as_ref()).ok();
+        if self.ansi_enabled {
+            write!(o, "\x1b[?25h\r\x1b[2K{}\n", msg.as_ref()).ok();
+        } else {
+            writeln!(o, "\r{}", msg.as_ref()).ok();
+        }
         o.flush().ok();
     }
 
@@ -132,9 +161,11 @@ impl LiveBar {
         let bar = Arc::clone(self);
         {
             let mut o = bar.out.lock().unwrap();
-            // main.rs already printed a blank line (profile slot).
-            // Write one more \n to reserve the bar slot; hide cursor.
-            write!(o, "\n\x1b[?25l").ok();
+            if bar.ansi_enabled {
+                // main.rs already printed a blank line (profile slot).
+                // Write one more \n to reserve the bar slot; hide cursor.
+                write!(o, "\n\x1b[?25l").ok();
+            }
             o.flush().ok();
         }
         std::thread::spawn(move || {
@@ -147,7 +178,11 @@ impl LiveBar {
             loop {
                 if bar.stopped.load(Ordering::Relaxed) {
                     if let Ok(mut o) = bar.out.lock() {
-                        write!(o, "\x1b[?25h\r\x1b[2K").ok();
+                        if bar.ansi_enabled {
+                            write!(o, "\x1b[?25h\r\x1b[2K").ok();
+                        } else {
+                            writeln!(o).ok();
+                        }
                         o.flush().ok();
                     }
                     break;
@@ -263,6 +298,14 @@ impl LiveBar {
         );
         let bar_raw = format!(" {sp_col} [{elapsed_str}] [{bar_col}{right_col}");
         let bar_line = fit_to_width(&bar_raw, max_vis);
+
+        if !self.ansi_enabled {
+            let mut o = self.out.lock().unwrap();
+            write!(o, "\r[{elapsed_str}] {pct:>3}% | {pos}/{} | ok={ok} blocked={blocked} dead={dead} | {speed}/s | ETA: {eta_str}     ", self.total).ok();
+            o.flush().ok();
+            self.prev_cols.store(cols, Ordering::Relaxed);
+            return;
+        }
 
         // ── erase old 2-line block, redraw ───────────────────────────
         //
