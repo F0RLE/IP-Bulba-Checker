@@ -19,7 +19,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -47,10 +47,42 @@ jobs:
         
     - name: Install LLVM (Windows)
       if: runner.os == 'Windows'
-      shell: bash
+      shell: pwsh
       run: |
-        choco install llvm cmake -y
-        echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
+        $cmake = Get-Command cmake -ErrorAction SilentlyContinue
+        if (-not $cmake) {
+          foreach ($candidate in @(
+            "$env:ProgramFiles\\CMake\\bin\\cmake.exe",
+            "$env:ProgramFiles(x86)\\CMake\\bin\\cmake.exe"
+          )) {
+            if (Test-Path $candidate) {
+              $cmake = Get-Item $candidate
+              break
+            }
+          }
+        }
+        if (-not $cmake) {
+          throw "cmake not found on the runner"
+        }
+
+        $clang = Get-Command clang -ErrorAction SilentlyContinue
+        if (-not $clang) {
+          foreach ($candidate in @(
+            "$env:ProgramFiles\\LLVM\\bin\\clang.exe",
+            "$env:ProgramFiles(x86)\\LLVM\\bin\\clang.exe"
+          )) {
+            if (Test-Path $candidate) {
+              $clang = Get-Item $candidate
+              break
+            }
+          }
+        }
+        if (-not $clang) {
+          throw "clang not found on the runner"
+        }
+
+        $libclangDir = Split-Path $clang.FullName -Parent
+        "LIBCLANG_PATH=$libclangDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         
     - name: Install LLVM (macOS)
       if: runner.os == 'macOS'
