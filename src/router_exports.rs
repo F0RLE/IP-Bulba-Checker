@@ -11,59 +11,59 @@ use crate::scanner::types::{
 use crate::scanner::{RoutingDecision, ScanResult};
 use crate::service_profiles;
 
+const TXT_DIR: &str = "txt";
+const JSON_DIR: &str = "json";
+const YAML_DIR: &str = "yaml";
+const BIN_DIR: &str = "bin";
 const SING_BOX_RULE_SET_VERSION: u8 = 4;
 const SING_BOX_TAG: &str = "bulba-proxy-required";
-const SING_BOX_RULE_SET_FILE: &str = "sing-box-rule-set.json";
-const SING_BOX_BINARY_RULE_SET_FILE: &str = "sing-box-rule-set.srs";
-const SING_BOX_ROUTE_FILE: &str = "sing-box-route-snippet.json";
-const SING_BOX_BINARY_ROUTE_FILE: &str = "sing-box-binary-route-snippet.json";
-const XRAY_ROUTE_FILE: &str = "xray-routing-rule.json";
-const MIHOMO_RULE_SET_FILE: &str = "mihomo-rule-set.txt";
-const MIHOMO_BINARY_RULE_SET_FILE: &str = "mihomo-rule-set.mrs";
-const MIHOMO_PROVIDER_FILE: &str = "mihomo-rule-provider.yaml";
-const MIHOMO_BINARY_PROVIDER_FILE: &str = "mihomo-binary-rule-provider.yaml";
-const OPENWRT_PBR_FILE: &str = "openwrt-pbr-domains.txt";
-const OPENWRT_DNSMASQ_IPSET_FILE: &str = "openwrt-dnsmasq-ipset.conf";
+const SING_BOX_RULE_SET_FILE: &str = "sing-box.json";
+const SING_BOX_BINARY_RULE_SET_FILE: &str = "sing-box.srs";
+const SING_BOX_ROUTE_FILE: &str = "sing-box-route.json";
+const SING_BOX_BINARY_ROUTE_FILE: &str = "sing-box-binary-route.json";
+const XRAY_ROUTE_FILE: &str = "xray.json";
+const MIHOMO_RULE_SET_FILE: &str = "mihomo.txt";
+const MIHOMO_BINARY_RULE_SET_FILE: &str = "mihomo.mrs";
+const MIHOMO_PROVIDER_FILE: &str = "mihomo.yaml";
+const MIHOMO_BINARY_PROVIDER_FILE: &str = "mihomo-binary.yaml";
+const OPENWRT_PBR_FILE: &str = "openwrt.txt";
+const OPENWRT_DNSMASQ_IPSET_FILE: &str = "dnsmasq.conf";
 const STRICT_SING_BOX_TAG: &str = "bulba-confirmed-proxy-required";
-const STRICT_SING_BOX_RULE_SET_FILE: &str = "strict-sing-box-rule-set.json";
-const STRICT_SING_BOX_BINARY_RULE_SET_FILE: &str = "strict-sing-box-rule-set.srs";
-const STRICT_SING_BOX_ROUTE_FILE: &str = "strict-sing-box-route-snippet.json";
-const STRICT_SING_BOX_BINARY_ROUTE_FILE: &str = "strict-sing-box-binary-route-snippet.json";
-const STRICT_XRAY_ROUTE_FILE: &str = "strict-xray-routing-rule.json";
-const STRICT_MIHOMO_RULE_SET_FILE: &str = "strict-mihomo-rule-set.txt";
-const STRICT_MIHOMO_BINARY_RULE_SET_FILE: &str = "strict-mihomo-rule-set.mrs";
-const STRICT_MIHOMO_PROVIDER_FILE: &str = "strict-mihomo-rule-provider.yaml";
-const STRICT_MIHOMO_BINARY_PROVIDER_FILE: &str = "strict-mihomo-binary-rule-provider.yaml";
-const STRICT_OPENWRT_PBR_FILE: &str = "strict-openwrt-pbr-domains.txt";
-const STRICT_OPENWRT_DNSMASQ_IPSET_FILE: &str = "strict-openwrt-dnsmasq-ipset.conf";
+const STRICT_SING_BOX_RULE_SET_FILE: &str = "strict.json";
+const STRICT_SING_BOX_BINARY_RULE_SET_FILE: &str = "strict.srs";
+const STRICT_SING_BOX_ROUTE_FILE: &str = "strict-route.json";
+const STRICT_SING_BOX_BINARY_ROUTE_FILE: &str = "strict-binary-route.json";
+const STRICT_XRAY_ROUTE_FILE: &str = "strict-xray.json";
+const STRICT_MIHOMO_RULE_SET_FILE: &str = "strict.txt";
+const STRICT_MIHOMO_BINARY_RULE_SET_FILE: &str = "strict.mrs";
+const STRICT_MIHOMO_PROVIDER_FILE: &str = "strict.yaml";
+const STRICT_MIHOMO_BINARY_PROVIDER_FILE: &str = "strict-binary.yaml";
+const STRICT_OPENWRT_PBR_FILE: &str = "strict-openwrt.txt";
+const STRICT_OPENWRT_DNSMASQ_IPSET_FILE: &str = "strict-dnsmasq.conf";
 const SERVICE_BUNDLE_SING_BOX_TAG: &str = "bulba-known-service-bundles";
-const SERVICE_BUNDLE_SING_BOX_RULE_SET_FILE: &str = "known-service-bundle-rule-set.json";
-const SERVICE_BUNDLE_SING_BOX_BINARY_RULE_SET_FILE: &str = "known-service-bundle-rule-set.srs";
-const SERVICE_BUNDLE_SING_BOX_ROUTE_FILE: &str = "known-service-bundle-route-snippet.json";
-const SERVICE_BUNDLE_SING_BOX_BINARY_ROUTE_FILE: &str =
-    "known-service-bundle-binary-route-snippet.json";
-const SERVICE_BUNDLE_XRAY_ROUTE_FILE: &str = "known-service-bundle-xray-routing-rule.json";
-const SERVICE_BUNDLE_MIHOMO_RULE_SET_FILE: &str = "known-service-bundle-mihomo-rule-set.txt";
-const SERVICE_BUNDLE_MIHOMO_BINARY_RULE_SET_FILE: &str = "known-service-bundle-mihomo-rule-set.mrs";
-const SERVICE_BUNDLE_MIHOMO_PROVIDER_FILE: &str = "known-service-bundle-mihomo-rule-provider.yaml";
-const SERVICE_BUNDLE_MIHOMO_BINARY_PROVIDER_FILE: &str =
-    "known-service-bundle-mihomo-binary-rule-provider.yaml";
-const SERVICE_BUNDLE_OPENWRT_PBR_FILE: &str = "known-service-bundle-openwrt-pbr-domains.txt";
-const SERVICE_BUNDLE_OPENWRT_DNSMASQ_FILE: &str = "known-service-bundle-dnsmasq-ipset.conf";
+const SERVICE_BUNDLE_SING_BOX_RULE_SET_FILE: &str = "bundle.json";
+const SERVICE_BUNDLE_SING_BOX_BINARY_RULE_SET_FILE: &str = "bundle.srs";
+const SERVICE_BUNDLE_SING_BOX_ROUTE_FILE: &str = "bundle-route.json";
+const SERVICE_BUNDLE_SING_BOX_BINARY_ROUTE_FILE: &str = "bundle-binary-route.json";
+const SERVICE_BUNDLE_XRAY_ROUTE_FILE: &str = "bundle-xray.json";
+const SERVICE_BUNDLE_MIHOMO_RULE_SET_FILE: &str = "bundle.txt";
+const SERVICE_BUNDLE_MIHOMO_BINARY_RULE_SET_FILE: &str = "bundle.mrs";
+const SERVICE_BUNDLE_MIHOMO_PROVIDER_FILE: &str = "bundle.yaml";
+const SERVICE_BUNDLE_MIHOMO_BINARY_PROVIDER_FILE: &str = "bundle-binary.yaml";
+const SERVICE_BUNDLE_OPENWRT_PBR_FILE: &str = "bundle-openwrt.txt";
+const SERVICE_BUNDLE_OPENWRT_DNSMASQ_FILE: &str = "bundle-dnsmasq.conf";
 const GENERIC_APEX_SING_BOX_TAG: &str = "bulba-generic-apex-bypass";
-const GENERIC_APEX_SING_BOX_RULE_SET_FILE: &str = "generic-apex-bypass-rule-set.json";
-const GENERIC_APEX_SING_BOX_BINARY_RULE_SET_FILE: &str = "generic-apex-bypass-rule-set.srs";
-const GENERIC_APEX_SING_BOX_ROUTE_FILE: &str = "generic-apex-bypass-route-snippet.json";
-const GENERIC_APEX_SING_BOX_BINARY_ROUTE_FILE: &str =
-    "generic-apex-bypass-binary-route-snippet.json";
-const GENERIC_APEX_XRAY_ROUTE_FILE: &str = "generic-apex-bypass-xray-routing-rule.json";
-const GENERIC_APEX_MIHOMO_RULE_SET_FILE: &str = "generic-apex-bypass-mihomo-rule-set.txt";
-const GENERIC_APEX_MIHOMO_BINARY_RULE_SET_FILE: &str = "generic-apex-bypass-mihomo-rule-set.mrs";
-const GENERIC_APEX_MIHOMO_PROVIDER_FILE: &str = "generic-apex-bypass-mihomo-rule-provider.yaml";
-const GENERIC_APEX_MIHOMO_BINARY_PROVIDER_FILE: &str =
-    "generic-apex-bypass-mihomo-binary-rule-provider.yaml";
-const GENERIC_APEX_OPENWRT_PBR_FILE: &str = "generic-apex-bypass-domains.txt";
-const GENERIC_APEX_OPENWRT_DNSMASQ_FILE: &str = "generic-apex-bypass-dnsmasq-ipset.conf";
+const GENERIC_APEX_SING_BOX_RULE_SET_FILE: &str = "apex.json";
+const GENERIC_APEX_SING_BOX_BINARY_RULE_SET_FILE: &str = "apex.srs";
+const GENERIC_APEX_SING_BOX_ROUTE_FILE: &str = "apex-route.json";
+const GENERIC_APEX_SING_BOX_BINARY_ROUTE_FILE: &str = "apex-binary-route.json";
+const GENERIC_APEX_XRAY_ROUTE_FILE: &str = "apex-xray.json";
+const GENERIC_APEX_MIHOMO_RULE_SET_FILE: &str = "apex.txt";
+const GENERIC_APEX_MIHOMO_BINARY_RULE_SET_FILE: &str = "apex.mrs";
+const GENERIC_APEX_MIHOMO_PROVIDER_FILE: &str = "apex.yaml";
+const GENERIC_APEX_MIHOMO_BINARY_PROVIDER_FILE: &str = "apex-binary.yaml";
+const GENERIC_APEX_OPENWRT_PBR_FILE: &str = "apex-openwrt.txt";
+const GENERIC_APEX_OPENWRT_DNSMASQ_FILE: &str = "apex-dnsmasq.conf";
 const OPENWRT_IPSET_NAME: &str = "bulba_proxy";
 
 #[derive(Serialize)]
@@ -142,6 +142,27 @@ struct RouterExportSpec<'a> {
     openwrt_pbr_file: &'a str,
     openwrt_dnsmasq_file: &'a str,
     xray_rule_tag: &'a str,
+}
+
+#[derive(Clone, Copy)]
+enum OutputBucket {
+    Txt,
+    Json,
+    Yaml,
+    Bin,
+}
+
+fn output_bucket_dir(output_dir: &Path, bucket: OutputBucket) -> PathBuf {
+    match bucket {
+        OutputBucket::Txt => output_dir.join(TXT_DIR),
+        OutputBucket::Json => output_dir.join(JSON_DIR),
+        OutputBucket::Yaml => output_dir.join(YAML_DIR),
+        OutputBucket::Bin => output_dir.join(BIN_DIR),
+    }
+}
+
+fn output_path(output_dir: &Path, bucket: OutputBucket, file: &str) -> PathBuf {
+    output_bucket_dir(output_dir, bucket).join(file)
 }
 
 pub fn write_router_exports(
@@ -445,17 +466,46 @@ fn write_router_exports_for_domains(
     output_dir: &Path,
     spec: RouterExportSpec<'_>,
 ) -> anyhow::Result<Vec<String>> {
-    let sing_box_rule_set_path = output_dir.join(spec.sing_box_rule_set_file);
-    let sing_box_binary_rule_set_path = output_dir.join(spec.sing_box_binary_rule_set_file);
-    let sing_box_route_path = output_dir.join(spec.sing_box_route_file);
-    let sing_box_binary_route_path = output_dir.join(spec.sing_box_binary_route_file);
-    let xray_route_path = output_dir.join(spec.xray_route_file);
-    let mihomo_rule_set_path = output_dir.join(spec.mihomo_rule_set_file);
-    let mihomo_binary_rule_set_path = output_dir.join(spec.mihomo_binary_rule_set_file);
-    let mihomo_provider_path = output_dir.join(spec.mihomo_provider_file);
-    let mihomo_binary_provider_path = output_dir.join(spec.mihomo_binary_provider_file);
-    let openwrt_pbr_path = output_dir.join(spec.openwrt_pbr_file);
-    let openwrt_dnsmasq_path = output_dir.join(spec.openwrt_dnsmasq_file);
+    for bucket in [
+        OutputBucket::Txt,
+        OutputBucket::Json,
+        OutputBucket::Yaml,
+        OutputBucket::Bin,
+    ] {
+        std::fs::create_dir_all(output_bucket_dir(output_dir, bucket))?;
+    }
+
+    let sing_box_rule_set_path =
+        output_path(output_dir, OutputBucket::Json, spec.sing_box_rule_set_file);
+    let sing_box_binary_rule_set_path = output_path(
+        output_dir,
+        OutputBucket::Bin,
+        spec.sing_box_binary_rule_set_file,
+    );
+    let sing_box_route_path = output_path(output_dir, OutputBucket::Json, spec.sing_box_route_file);
+    let sing_box_binary_route_path = output_path(
+        output_dir,
+        OutputBucket::Json,
+        spec.sing_box_binary_route_file,
+    );
+    let xray_route_path = output_path(output_dir, OutputBucket::Json, spec.xray_route_file);
+    let mihomo_rule_set_path =
+        output_path(output_dir, OutputBucket::Txt, spec.mihomo_rule_set_file);
+    let mihomo_binary_rule_set_path = output_path(
+        output_dir,
+        OutputBucket::Bin,
+        spec.mihomo_binary_rule_set_file,
+    );
+    let mihomo_provider_path =
+        output_path(output_dir, OutputBucket::Yaml, spec.mihomo_provider_file);
+    let mihomo_binary_provider_path = output_path(
+        output_dir,
+        OutputBucket::Yaml,
+        spec.mihomo_binary_provider_file,
+    );
+    let openwrt_pbr_path = output_path(output_dir, OutputBucket::Txt, spec.openwrt_pbr_file);
+    let openwrt_dnsmasq_path =
+        output_path(output_dir, OutputBucket::Txt, spec.openwrt_dnsmasq_file);
 
     write_sing_box_rule_set(domains, &sing_box_rule_set_path)?;
     write_sing_box_route_snippet(
@@ -798,35 +848,35 @@ mod tests {
         let written = write_router_exports(&results, &dir).unwrap();
         assert_eq!(written.len(), 7);
 
-        let sing_box = std::fs::read_to_string(dir.join("sing-box-rule-set.json")).unwrap();
+        let sing_box = std::fs::read_to_string(dir.join("json").join("sing-box.json")).unwrap();
         assert!(sing_box.contains("\"version\": 4"));
         assert!(sing_box.contains("\"claude.ai\""));
         assert!(!sing_box.contains("direct.example"));
 
         let sing_box_route =
-            std::fs::read_to_string(dir.join("sing-box-route-snippet.json")).unwrap();
+            std::fs::read_to_string(dir.join("json").join("sing-box-route.json")).unwrap();
         assert!(sing_box_route.contains("\"action\": \"route\""));
         assert!(sing_box_route.contains("\"rule_set\": \"bulba-proxy-required\""));
 
-        let xray = std::fs::read_to_string(dir.join("xray-routing-rule.json")).unwrap();
+        let xray = std::fs::read_to_string(dir.join("json").join("xray.json")).unwrap();
         assert!(xray.contains("\"full:claude.ai\""));
         assert!(!xray.contains("direct.example"));
 
-        let mihomo = std::fs::read_to_string(dir.join("mihomo-rule-set.txt")).unwrap();
+        let mihomo = std::fs::read_to_string(dir.join("txt").join("mihomo.txt")).unwrap();
         assert!(mihomo.contains("claude.ai"));
         assert!(!mihomo.contains("direct.example"));
 
         let mihomo_provider =
-            std::fs::read_to_string(dir.join("mihomo-rule-provider.yaml")).unwrap();
+            std::fs::read_to_string(dir.join("yaml").join("mihomo.yaml")).unwrap();
         assert!(mihomo_provider.contains("behavior: domain"));
         assert!(mihomo_provider.contains("format: text"));
-        assert!(mihomo_provider.contains("path: mihomo-rule-set.txt"));
+        assert!(mihomo_provider.contains("path: mihomo.txt"));
 
-        let openwrt_pbr = std::fs::read_to_string(dir.join("openwrt-pbr-domains.txt")).unwrap();
+        let openwrt_pbr = std::fs::read_to_string(dir.join("txt").join("openwrt.txt")).unwrap();
         assert!(openwrt_pbr.contains("claude.ai"));
         assert!(!openwrt_pbr.contains("direct.example"));
 
-        let dnsmasq = std::fs::read_to_string(dir.join("openwrt-dnsmasq-ipset.conf")).unwrap();
+        let dnsmasq = std::fs::read_to_string(dir.join("txt").join("dnsmasq.conf")).unwrap();
         assert!(dnsmasq.contains("ipset=/claude.ai/bulba_proxy"));
         assert!(!dnsmasq.contains("direct.example"));
 
@@ -923,35 +973,34 @@ mod tests {
         let written = write_strict_router_exports(&comparisons, &dir).unwrap();
         assert_eq!(written.len(), 7);
 
-        let sing_box = std::fs::read_to_string(dir.join("strict-sing-box-rule-set.json")).unwrap();
+        let sing_box = std::fs::read_to_string(dir.join("json").join("strict.json")).unwrap();
         assert!(sing_box.contains("\"claude.ai\""));
         assert!(!sing_box.contains("review.example"));
 
         let sing_box_route =
-            std::fs::read_to_string(dir.join("strict-sing-box-route-snippet.json")).unwrap();
+            std::fs::read_to_string(dir.join("json").join("strict-route.json")).unwrap();
         assert!(sing_box_route.contains("\"bulba-confirmed-proxy-required\""));
 
-        let xray = std::fs::read_to_string(dir.join("strict-xray-routing-rule.json")).unwrap();
+        let xray = std::fs::read_to_string(dir.join("json").join("strict-xray.json")).unwrap();
         assert!(xray.contains("\"full:claude.ai\""));
         assert!(xray.contains("bulbascan-confirmed-proxy-required"));
         assert!(!xray.contains("review.example"));
 
-        let mihomo = std::fs::read_to_string(dir.join("strict-mihomo-rule-set.txt")).unwrap();
+        let mihomo = std::fs::read_to_string(dir.join("txt").join("strict.txt")).unwrap();
         assert!(mihomo.contains("claude.ai"));
         assert!(!mihomo.contains("review.example"));
 
         let mihomo_provider =
-            std::fs::read_to_string(dir.join("strict-mihomo-rule-provider.yaml")).unwrap();
+            std::fs::read_to_string(dir.join("yaml").join("strict.yaml")).unwrap();
         assert!(mihomo_provider.contains("format: text"));
-        assert!(mihomo_provider.contains("path: strict-mihomo-rule-set.txt"));
+        assert!(mihomo_provider.contains("path: strict.txt"));
 
         let openwrt_pbr =
-            std::fs::read_to_string(dir.join("strict-openwrt-pbr-domains.txt")).unwrap();
+            std::fs::read_to_string(dir.join("txt").join("strict-openwrt.txt")).unwrap();
         assert!(openwrt_pbr.contains("claude.ai"));
         assert!(!openwrt_pbr.contains("review.example"));
 
-        let dnsmasq =
-            std::fs::read_to_string(dir.join("strict-openwrt-dnsmasq-ipset.conf")).unwrap();
+        let dnsmasq = std::fs::read_to_string(dir.join("txt").join("strict-dnsmasq.conf")).unwrap();
         assert!(dnsmasq.contains("ipset=/claude.ai/bulba_proxy"));
         assert!(!dnsmasq.contains("review.example"));
 
@@ -999,13 +1048,11 @@ mod tests {
         let written = write_generic_apex_exports(&results, &dir).unwrap();
         assert_eq!(written.len(), 7);
 
-        let sing_box =
-            std::fs::read_to_string(dir.join("generic-apex-bypass-rule-set.json")).unwrap();
+        let sing_box = std::fs::read_to_string(dir.join("json").join("apex.json")).unwrap();
         assert!(sing_box.contains("\"unknown.example\""));
         assert!(!sing_box.contains("claude.ai"));
 
-        let mihomo =
-            std::fs::read_to_string(dir.join("generic-apex-bypass-mihomo-rule-set.txt")).unwrap();
+        let mihomo = std::fs::read_to_string(dir.join("txt").join("apex.txt")).unwrap();
         assert!(mihomo.contains("unknown.example"));
         assert!(!mihomo.contains("claude.ai"));
 
@@ -1106,27 +1153,24 @@ mod tests {
         let written = write_split_router_exports(&comparisons, &service_geo, &dir).unwrap();
         assert_eq!(written.len(), 14);
 
-        let service_bundle =
-            std::fs::read_to_string(dir.join("known-service-bundle-rule-set.json")).unwrap();
+        let service_bundle = std::fs::read_to_string(dir.join("json").join("bundle.json")).unwrap();
         assert!(service_bundle.contains("\"claude.ai\""));
         assert!(service_bundle.contains("\"console.anthropic.com\""));
         assert!(service_bundle.contains("\"api.anthropic.com\""));
         assert!(!service_bundle.contains("unknown.example"));
 
-        let generic =
-            std::fs::read_to_string(dir.join("generic-apex-bypass-rule-set.json")).unwrap();
+        let generic = std::fs::read_to_string(dir.join("json").join("apex.json")).unwrap();
         assert!(generic.contains("\"unknown.example\""));
         assert!(!generic.contains("claude.ai"));
 
         let service_bundle_mihomo =
-            std::fs::read_to_string(dir.join("known-service-bundle-mihomo-rule-set.txt")).unwrap();
+            std::fs::read_to_string(dir.join("txt").join("bundle.txt")).unwrap();
         assert!(service_bundle_mihomo.contains("claude.ai"));
         assert!(service_bundle_mihomo.contains("console.anthropic.com"));
         assert!(service_bundle_mihomo.contains("api.anthropic.com"));
         assert!(!service_bundle_mihomo.contains("unknown.example"));
 
-        let generic_mihomo =
-            std::fs::read_to_string(dir.join("generic-apex-bypass-mihomo-rule-set.txt")).unwrap();
+        let generic_mihomo = std::fs::read_to_string(dir.join("txt").join("apex.txt")).unwrap();
         assert!(generic_mihomo.contains("unknown.example"));
         assert!(!generic_mihomo.contains("claude.ai"));
 

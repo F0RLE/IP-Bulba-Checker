@@ -33,19 +33,44 @@ use pipeline::{
 };
 
 // ── Worker count persistence ───────────────────────────────────────────────
-// Saved to .bulbascan_workers in CWD; overridden if --concurrency is explicit.
+// Saved in a user config location; overridden if --concurrency is explicit.
 const WORKERS_FILE: &str = ".bulbascan_workers";
 const DEFAULT_WORKERS: usize = 50;
+const TXT_DIR: &str = "txt";
+const JSON_DIR: &str = "json";
+const YAML_DIR: &str = "yaml";
+const BIN_DIR: &str = "bin";
 
-fn load_workers(path: &str) -> Option<usize> {
+fn worker_state_path() -> std::path::PathBuf {
+    let base_dir = if cfg!(windows) {
+        std::env::var_os("APPDATA").map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+    } else if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        std::path::PathBuf::from(xdg)
+    } else if let Some(home) = std::env::var_os("HOME") {
+        std::path::PathBuf::from(home).join(".config")
+    } else {
+        std::env::temp_dir()
+    };
+
+    base_dir.join("Bulbascan").join("workers.txt")
+}
+
+fn load_workers(path: &std::path::Path) -> Option<usize> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .filter(|&n: &usize| (1..=1000).contains(&n))
 }
 
-fn save_workers(path: &str, n: usize) {
+fn save_workers(path: &std::path::Path, n: usize) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let _ = std::fs::write(path, n.to_string());
+}
+
+fn output_path(results_dir: &std::path::Path, bucket: &str, file: &str) -> std::path::PathBuf {
+    results_dir.join(bucket).join(file)
 }
 
 /// Look up the 2-letter country code seen from `proxy` (or from the local path
@@ -88,11 +113,17 @@ async fn main() -> anyhow::Result<()> {
     let mut args = Args::from_arg_matches(&matches)?;
     let loaded_config = config::load_and_apply(&mut args, &matches)?;
     let version = env!("CARGO_PKG_VERSION");
+    let worker_state_path = worker_state_path();
+    let legacy_worker_path = std::path::Path::new(WORKERS_FILE);
 
     // Resolve concurrency: CLI flag wins, else last-saved value, else default.
     let concurrency: usize = args
         .concurrency
-        .unwrap_or_else(|| load_workers(WORKERS_FILE).unwrap_or(DEFAULT_WORKERS))
+        .unwrap_or_else(|| {
+            load_workers(&worker_state_path)
+                .or_else(|| load_workers(legacy_worker_path))
+                .unwrap_or(DEFAULT_WORKERS)
+        })
         .clamp(1, 1000);
 
     let using_default_results_dir = args.results_dir == std::path::Path::new("results");
@@ -197,61 +228,70 @@ async fn main() -> anyhow::Result<()> {
     if !args.results_dir.exists() {
         tokio::fs::create_dir_all(&args.results_dir).await?;
     }
+    for bucket in [TXT_DIR, JSON_DIR, YAML_DIR, BIN_DIR] {
+        tokio::fs::create_dir_all(args.results_dir.join(bucket)).await?;
+    }
 
     // Prepare paths
-    let out_ok = args.results_dir.join(&args.out_ok);
-    let out_blocked = args.results_dir.join(&args.out_blocked);
+    let out_ok = output_path(&args.results_dir, TXT_DIR, &args.out_ok.to_string_lossy());
+    let out_blocked = output_path(
+        &args.results_dir,
+        TXT_DIR,
+        &args.out_blocked.to_string_lossy(),
+    );
     let out_ok_cleanup_path = out_ok.clone();
-    let geosite_path = args.results_dir.join(&args.geosite);
-    let report_path = args.results_dir.join("report.txt");
-    let services_report_path = args.results_dir.join("services_report.txt");
-    let manual_review_hotspots_path = args.results_dir.join("manual_review_hotspots.txt");
-    let proxy_required_path = args.results_dir.join("proxy_required.txt");
-    let direct_ok_path = args.results_dir.join("direct_ok.txt");
-    let manual_review_path = args.results_dir.join("manual_review.txt");
-    let blocked_domains_path = args.results_dir.join(&args.blocked_list);
-    let comparison_report_path = args.results_dir.join("comparison_report.txt");
-    let confirmed_proxy_required_path = args.results_dir.join("confirmed_proxy_required.txt");
-    let control_proxy_health_path = args.results_dir.join("control_proxy_health.txt");
-    let service_geo_report_path = args.results_dir.join("service_geo_report.txt");
-    let validation_report_path = args.results_dir.join("validation_report.txt");
-    let strict_sing_box_rule_set_path = args.results_dir.join("strict-sing-box-rule-set.json");
+    let geosite_path = output_path(&args.results_dir, BIN_DIR, &args.geosite.to_string_lossy());
+    let report_path = output_path(&args.results_dir, TXT_DIR, "report.txt");
+    let services_report_path = output_path(&args.results_dir, TXT_DIR, "services.txt");
+    let manual_review_hotspots_path = output_path(&args.results_dir, TXT_DIR, "hotspots.txt");
+    let proxy_required_path = output_path(&args.results_dir, TXT_DIR, "proxy.txt");
+    let direct_ok_path = output_path(&args.results_dir, TXT_DIR, "direct.txt");
+    let manual_review_path = output_path(&args.results_dir, TXT_DIR, "review.txt");
+    let blocked_domains_path = output_path(
+        &args.results_dir,
+        TXT_DIR,
+        &args.blocked_list.to_string_lossy(),
+    );
+    let comparison_report_path = output_path(&args.results_dir, TXT_DIR, "comparison.txt");
+    let confirmed_proxy_required_path = output_path(&args.results_dir, TXT_DIR, "confirmed.txt");
+    let control_proxy_health_path = output_path(&args.results_dir, TXT_DIR, "control-health.txt");
+    let service_geo_report_path = output_path(&args.results_dir, TXT_DIR, "service-geo.txt");
+    let validation_report_path = output_path(&args.results_dir, TXT_DIR, "validation.txt");
+    let strict_sing_box_rule_set_path = output_path(&args.results_dir, JSON_DIR, "strict.json");
     let strict_sing_box_binary_rule_set_path =
-        args.results_dir.join("strict-sing-box-rule-set.srs");
-    let strict_sing_box_route_path = args.results_dir.join("strict-sing-box-route-snippet.json");
-    let strict_sing_box_binary_route_path = args
-        .results_dir
-        .join("strict-sing-box-binary-route-snippet.json");
-    let strict_xray_route_path = args.results_dir.join("strict-xray-routing-rule.json");
-    let strict_mihomo_rule_set_path = args.results_dir.join("strict-mihomo-rule-set.txt");
-    let strict_mihomo_binary_rule_set_path = args.results_dir.join("strict-mihomo-rule-set.mrs");
-    let strict_mihomo_provider_path = args.results_dir.join("strict-mihomo-rule-provider.yaml");
-    let strict_mihomo_binary_provider_path = args
-        .results_dir
-        .join("strict-mihomo-binary-rule-provider.yaml");
-    let strict_openwrt_pbr_path = args.results_dir.join("strict-openwrt-pbr-domains.txt");
-    let strict_openwrt_dnsmasq_path = args.results_dir.join("strict-openwrt-dnsmasq-ipset.conf");
-    let publication_report_path = args.results_dir.join("publication_report.txt");
+        output_path(&args.results_dir, BIN_DIR, "strict.srs");
+    let strict_sing_box_route_path = output_path(&args.results_dir, JSON_DIR, "strict-route.json");
+    let strict_sing_box_binary_route_path =
+        output_path(&args.results_dir, JSON_DIR, "strict-binary-route.json");
+    let strict_xray_route_path = output_path(&args.results_dir, JSON_DIR, "strict-xray.json");
+    let strict_mihomo_rule_set_path = output_path(&args.results_dir, TXT_DIR, "strict.txt");
+    let strict_mihomo_binary_rule_set_path = output_path(&args.results_dir, BIN_DIR, "strict.mrs");
+    let strict_mihomo_provider_path = output_path(&args.results_dir, YAML_DIR, "strict.yaml");
+    let strict_mihomo_binary_provider_path =
+        output_path(&args.results_dir, YAML_DIR, "strict-binary.yaml");
+    let strict_openwrt_pbr_path = output_path(&args.results_dir, TXT_DIR, "strict-openwrt.txt");
+    let strict_openwrt_dnsmasq_path =
+        output_path(&args.results_dir, TXT_DIR, "strict-dnsmasq.conf");
+    let publication_report_path = output_path(&args.results_dir, TXT_DIR, "publication.txt");
     let output_format = args.format.clone();
     let signatures_file = args.signatures.clone();
     let scan_policy = args.profile.as_scanner_policy();
-    let state_dir = args.state_dir.clone();
+    let explicit_state_dir = args.state_dir.clone();
+    let state_dir = explicit_state_dir
+        .clone()
+        .unwrap_or_else(|| args.results_dir.join("state"));
+    let state_dir_ref = state_dir.as_path();
+    let state_enabled = true;
 
-    let state_enabled = state_dir.is_some();
-
-    let mut local_state = if let Some(dir) = state_dir.as_ref() {
-        match state::LocalState::load(dir) {
-            Ok(existing) => existing,
-            Err(err) => {
-                anyhow::bail!(
-                    "State directory {} is corrupted or unreadable: {err}\n\
-                     Fix or remove the directory, or omit --state-dir.",
-                    dir.display()
-                );
-            }
+    let mut local_state = match state::LocalState::load(state_dir_ref) {
+        Ok(existing) => existing,
+        Err(err) => {
+            anyhow::bail!(
+                "State directory {} is corrupted or unreadable: {err}\n\
+                 Fix or remove the directory, or point --state-dir elsewhere.",
+                state_dir.display()
+            );
         }
-    } else {
-        state::LocalState::default()
     };
 
     // Read or fetch domains
@@ -500,7 +540,7 @@ async fn main() -> anyhow::Result<()> {
         };
         // Persist the live-adjusted worker count for next run.
         final_workers = fw;
-        save_workers(WORKERS_FILE, fw);
+        save_workers(&worker_state_path, fw);
         results
     };
 
@@ -512,7 +552,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&out_ok_cleanup_path);
     }
 
-    let mut blocked_domains_for_outputs = if state_dir.is_some() {
+    let mut blocked_domains_for_outputs = if state_enabled {
         local_state.blocked_domains()
     } else {
         blocked_domains_from_results(&scan_results)
@@ -590,9 +630,11 @@ async fn main() -> anyhow::Result<()> {
             Ok(paths) => println!("Router-native exports saved to {}.", paths.join(", ")),
             Err(e) => eprintln!("Error writing router-native exports: {e}"),
         }
-        match router_exports::write_generic_apex_exports(&scan_results, &args.results_dir) {
-            Ok(paths) => println!("Generic apex exports saved to {}.", paths.join(", ")),
-            Err(e) => eprintln!("Error writing generic apex exports: {e}"),
+        if args.export_profile == ExportProfileArg::Full {
+            match router_exports::write_generic_apex_exports(&scan_results, &args.results_dir) {
+                Ok(paths) => println!("Generic apex exports saved to {}.", paths.join(", ")),
+                Err(e) => eprintln!("Error writing generic apex exports: {e}"),
+            }
         }
     }
     if args.export_profile == ExportProfileArg::Full {
@@ -709,13 +751,13 @@ async fn main() -> anyhow::Result<()> {
             let comparisons = scanner::compare_with_control(&scan_results, &control_results);
             let confirmed_proxy_required = blocked_domains_from_comparisons(&comparisons);
             if !confirmed_proxy_required.is_empty() {
-                if state_dir.is_some() {
+                if state_enabled {
                     local_state.ingest_confirmed_blocked(&confirmed_proxy_required);
                     blocked_domains_for_outputs = local_state.blocked_domains();
                 }
                 geosite_domains = confirmed_proxy_required.clone();
                 geosite_use_scan_results = false;
-                let blocked_domains_ref = if state_dir.is_some() {
+                let blocked_domains_ref = if state_enabled {
                     &blocked_domains_for_outputs
                 } else {
                     &confirmed_proxy_required
@@ -807,16 +849,18 @@ async fn main() -> anyhow::Result<()> {
                     ),
                     Err(e) => eprintln!("Error writing strict router-native exports: {e}"),
                 }
-                match router_exports::write_split_router_exports(
-                    &comparisons,
-                    &service_geo,
-                    &args.results_dir,
-                ) {
-                    Ok(paths) => println!(
-                        "Known-service and generic split exports saved to {}.",
-                        paths.join(", ")
-                    ),
-                    Err(e) => eprintln!("Error writing split router exports: {e}"),
+                if args.export_profile == ExportProfileArg::Full {
+                    match router_exports::write_split_router_exports(
+                        &comparisons,
+                        &service_geo,
+                        &args.results_dir,
+                    ) {
+                        Ok(paths) => println!(
+                            "Known-service and generic split exports saved to {}.",
+                            paths.join(", ")
+                        ),
+                        Err(e) => eprintln!("Error writing split router exports: {e}"),
+                    }
                 }
             }
             if args.export_profile == ExportProfileArg::Full {
@@ -853,62 +897,28 @@ async fn main() -> anyhow::Result<()> {
                 &strict_mihomo_binary_provider_path,
                 &strict_openwrt_pbr_path,
                 &strict_openwrt_dnsmasq_path,
-                &args.results_dir.join("known-service-bundle-rule-set.json"),
-                &args.results_dir.join("known-service-bundle-rule-set.srs"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-rule-set.txt"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-rule-set.mrs"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-rule-provider.yaml"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-binary-rule-provider.yaml"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-binary-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-xray-routing-rule.json"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-openwrt-pbr-domains.txt"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-dnsmasq-ipset.conf"),
-                &args.results_dir.join("generic-apex-bypass-rule-set.json"),
-                &args.results_dir.join("generic-apex-bypass-rule-set.srs"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-binary-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-xray-routing-rule.json"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-rule-set.txt"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-rule-set.mrs"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-rule-provider.yaml"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-binary-rule-provider.yaml"),
-                &args.results_dir.join("generic-apex-bypass-domains.txt"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-dnsmasq-ipset.conf"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle.json"),
+                &output_path(&args.results_dir, BIN_DIR, "bundle.srs"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle.txt"),
+                &output_path(&args.results_dir, BIN_DIR, "bundle.mrs"),
+                &output_path(&args.results_dir, YAML_DIR, "bundle.yaml"),
+                &output_path(&args.results_dir, YAML_DIR, "bundle-binary.yaml"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-binary-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-xray.json"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle-openwrt.txt"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle-dnsmasq.conf"),
+                &output_path(&args.results_dir, JSON_DIR, "apex.json"),
+                &output_path(&args.results_dir, BIN_DIR, "apex.srs"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-binary-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-xray.json"),
+                &output_path(&args.results_dir, TXT_DIR, "apex.txt"),
+                &output_path(&args.results_dir, BIN_DIR, "apex.mrs"),
+                &output_path(&args.results_dir, YAML_DIR, "apex.yaml"),
+                &output_path(&args.results_dir, YAML_DIR, "apex-binary.yaml"),
+                &output_path(&args.results_dir, TXT_DIR, "apex-openwrt.txt"),
+                &output_path(&args.results_dir, TXT_DIR, "apex-dnsmasq.conf"),
             ] {
                 if stale.exists() {
                     let _ = std::fs::remove_file(stale);
@@ -925,15 +935,12 @@ async fn main() -> anyhow::Result<()> {
             &scan_results,
             comparison_results.as_deref(),
             &args.results_dir,
-            state_dir.as_deref(),
+            Some(state_dir_ref),
         ) {
             Ok(()) => println!(
-                "Publication artifacts saved to {} and rescan queues updated{}.",
+                "Publication artifacts saved to {} and rescan queues updated in {}.",
                 publication_report_path.display(),
-                state_dir
-                    .as_ref()
-                    .map(|dir| format!(" in {}", dir.display()))
-                    .unwrap_or_default()
+                state_dir.display()
             ),
             Err(e) => eprintln!("Error writing publication artifacts: {e}"),
         }
@@ -947,7 +954,7 @@ async fn main() -> anyhow::Result<()> {
         ));
 
         let geosite_result = if geosite_use_scan_results {
-            if state_dir.is_some() {
+            if state_enabled {
                 geosite::compile_domains(
                     &blocked_domains_for_outputs,
                     &geosite_path,
@@ -958,7 +965,7 @@ async fn main() -> anyhow::Result<()> {
             }
         } else {
             geosite::compile_domains(
-                if state_dir.is_some() {
+                if state_enabled {
                     &blocked_domains_for_outputs
                 } else {
                     &geosite_domains
@@ -981,10 +988,10 @@ async fn main() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&geosite_path);
     }
 
-    if state_enabled && let Some(dir) = state_dir.as_ref() {
-        match local_state.save(dir).await {
-            Ok(()) => println!("Local state saved to {}.", dir.display()),
-            Err(err) => eprintln!("Error saving state to {}: {err}", dir.display()),
+    if state_enabled {
+        match local_state.save(state_dir_ref).await {
+            Ok(()) => println!("Local state saved to {}.", state_dir.display()),
+            Err(err) => eprintln!("Error saving state to {}: {err}", state_dir.display()),
         }
     }
 

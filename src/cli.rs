@@ -150,7 +150,7 @@ impl ScanProfileArg {
 #[derive(Copy, Clone, Debug, Deserialize, Eq, PartialEq, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum ExportProfileArg {
-    /// Minimal: blocked-domains.txt + geosite.dat only.
+    /// Minimal: blocked.txt + geosite.dat only.
     Simple,
     /// Adds routing lists and router-native exports.
     Router,
@@ -220,7 +220,7 @@ pub(crate) struct Args {
     pub(crate) out_blocked: PathBuf,
 
     /// Blocked-domain list file name generated for simple usage
-    #[arg(short = 'B', long, default_value = "blocked-domains.txt")]
+    #[arg(short = 'B', long, default_value = "blocked.txt")]
     pub(crate) blocked_list: PathBuf,
 
     /// Format for the blocked-domain list

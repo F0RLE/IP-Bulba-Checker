@@ -26,9 +26,9 @@ bulbascan domains.txt
 
 This writes the default simple outputs:
 
-- `blocked-domains.txt`
-- `blocked.log`
-- `geosite.dat`
+- `txt/blocked.txt`
+- `txt/blocked.log`
+- `bin/geosite.dat`
 
 ---
 
@@ -175,7 +175,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http:
 Use this mode when:
 
 - you are validating a new control proxy
-- you want `comparison_report.txt` and `service_geo_report.txt`
+- you want `txt/comparison.txt` and `txt/service-geo.txt`
 - you are building a high-confidence routing list
 
 Tradeoffs:
@@ -215,6 +215,9 @@ Use this when you want to refresh router outputs quickly and are willing to acce
 ```sh
 bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http://user:pass@proxy:port --state-dir state-ru --export-profile router --timeout 6 --profile safe
 ```
+
+`router` keeps the output bundle smaller.
+Use `full` when you specifically need validation and advanced `bundle` / `apex` exports.
 
 Use this mode when:
 
@@ -256,7 +259,7 @@ Practical note:
 |  | `--xray-socks-listen` | `127.0.0.1:1080` | Listen address for generated Xray SOCKS inbound |
 | `-k` | `--out-ok` | `ok.log` | Accessible-domain log file name |
 | `-l` | `--out-blocked` | `blocked.log` | Blocked-domain log file name |
-| `-B` | `--blocked-list` | `blocked-domains.txt` | Blocked-domain list file name |
+| `-B` | `--blocked-list` | `blocked.txt` | Blocked-domain list file name |
 | `-F` | `--blocked-list-format` | `plain` | `plain` / `geosite-source` |
 | `-m` | `--merge-into-list` | — | Merge detected blocked domains into an existing list |
 | `-d` | `--geosite` | `geosite.dat` | Output geosite filename |
@@ -289,7 +292,7 @@ While a scan is running:
 | `↓` | Decrease workers by 1 |
 | `q` / `Esc` | Cancel scan |
 
-The last live worker count is saved to `.bulbascan_workers` and reused on the next run unless `--concurrency` is explicitly set.
+The last live worker count is saved in the user config area (`APPDATA/Bulbascan/workers.txt` on Windows) and reused on the next run unless `--concurrency` is explicitly set.
 
 ---
 
@@ -417,7 +420,9 @@ With a control proxy:
 
 ## Incremental State
 
-Use `--state-dir` to build a persistent local base:
+Bulbascan keeps persistent state automatically inside `results_dir/state`.
+
+Use `--state-dir` only when you want to override that location:
 
 ```sh
 bulbascan domains.txt --state-dir state
@@ -427,7 +432,7 @@ The state directory maintains:
 
 - `blocked.txt`
 - `direct.txt`
-- `manual_review.txt`
+- `txt/review.txt`
 - `rescan-hot.txt`
 - `rescan-warm.txt`
 - `rescan-cold.txt`
@@ -440,9 +445,9 @@ On later runs:
 
 For incremental publication:
 
-- `publish-strict-domains.txt` is the publication-grade tier
+- `txt/publish-strict.txt` is the publication-grade tier
 - `publish-review-domains.txt` is the holdback tier for later refresh cycles
-- `publication_report.txt` explains what is safe to publish now and what still belongs in review
+- `txt/publication.txt` explains what is safe to publish now and what still belongs in review
 
 ---
 
