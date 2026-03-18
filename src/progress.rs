@@ -5,6 +5,7 @@
 //! * Written to stderr. Cursor hidden while active. ASCII-safe bar chars.
 
 use crossterm::terminal;
+use std::io::IsTerminal;
 use std::io::{self, Write};
 use std::sync::{
     Arc, Mutex,
@@ -14,6 +15,8 @@ use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthChar;
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+const SPEED_SMOOTHING_WINDOW: Duration = Duration::from_secs(3);
 
 fn fit_to_width(s: &str, max_cols: usize) -> String {
     if max_cols == 0 {
@@ -65,6 +68,35 @@ fn tier(n: usize) -> &'static str {
     }
 }
 
+fn stderr_supports_ansi() -> bool {
+    if !io::stderr().is_terminal() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        crossterm::ansi_support::supports_ansi()
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var("TERM")
+            .map(|term| !term.eq_ignore_ascii_case("dumb"))
+            .unwrap_or(true)
+    }
+}
+
+fn smoothed_speed(current_pos: u64, first_pos: u64, elapsed: Duration) -> Option<u64> {
+    let nanos = elapsed.as_nanos();
+    if nanos == 0 {
+        return None;
+    }
+
+    let delta = u128::from(current_pos.saturating_sub(first_pos));
+    let rounded_per_sec = (delta * 1_000_000_000_u128 + nanos / 2) / nanos;
+    Some(u64::try_from(rounded_per_sec).unwrap_or(u64::MAX))
+}
+
 // ─── public API ───────────────────────────────────────────────────────────────
 
 pub struct LiveBar {
@@ -79,10 +111,10 @@ pub struct LiveBar {
     out: Arc<Mutex<io::Stderr>>,
     potato: bool,
     output_display: String,
+    ansi_enabled: bool,
     /// Terminal width from the previous render tick.
     prev_cols: Arc<AtomicUsize>,
-    speed_last_time: Mutex<Instant>,
-    speed_last_pos: AtomicU64,
+    speed_history: Mutex<Vec<(Instant, u64)>>,
     speed_value: AtomicU64,
 }
 
@@ -105,9 +137,9 @@ impl LiveBar {
             out: Arc::new(Mutex::new(io::stderr())),
             potato,
             output_display,
+            ansi_enabled: stderr_supports_ansi(),
             prev_cols: Arc::new(AtomicUsize::new(0)),
-            speed_last_time: Mutex::new(Instant::now()),
-            speed_last_pos: AtomicU64::new(0),
+            speed_history: Mutex::new(Vec::with_capacity(32)),
             speed_value: AtomicU64::new(0),
         })
     }
@@ -115,8 +147,12 @@ impl LiveBar {
     /// Print a log line — clears current bar line, prints msg, bar redraws next tick.
     pub fn println(&self, msg: impl AsRef<str>) {
         let mut o = self.out.lock().unwrap();
-        // Go up past the profile line, clear it, print msg, leave cursor for bar tick.
-        write!(o, "\x1b[1A\r\x1b[2K{}\n\n", msg.as_ref()).ok();
+        if self.ansi_enabled {
+            // Go up past the profile line, clear it, print msg, leave cursor for bar tick.
+            write!(o, "\x1b[1A\r\x1b[2K{}\n\n", msg.as_ref()).ok();
+        } else {
+            writeln!(o, "{}", msg.as_ref()).ok();
+        }
         o.flush().ok();
     }
 
@@ -124,7 +160,11 @@ impl LiveBar {
         self.stopped.store(true, Ordering::SeqCst);
         std::thread::sleep(Duration::from_millis(150));
         let mut o = self.out.lock().unwrap();
-        write!(o, "\x1b[?25h\r\x1b[2K{}\n", msg.as_ref()).ok();
+        if self.ansi_enabled {
+            write!(o, "\x1b[?25h\r\x1b[2K{}\n", msg.as_ref()).ok();
+        } else {
+            writeln!(o, "\r{}", msg.as_ref()).ok();
+        }
         o.flush().ok();
     }
 
@@ -132,9 +172,11 @@ impl LiveBar {
         let bar = Arc::clone(self);
         {
             let mut o = bar.out.lock().unwrap();
-            // main.rs already printed a blank line (profile slot).
-            // Write one more \n to reserve the bar slot; hide cursor.
-            write!(o, "\n\x1b[?25l").ok();
+            if bar.ansi_enabled {
+                // main.rs already printed a blank line (profile slot).
+                // Write one more \n to reserve the bar slot; hide cursor.
+                write!(o, "\n\x1b[?25l").ok();
+            }
             o.flush().ok();
         }
         std::thread::spawn(move || {
@@ -147,7 +189,11 @@ impl LiveBar {
             loop {
                 if bar.stopped.load(Ordering::Relaxed) {
                     if let Ok(mut o) = bar.out.lock() {
-                        write!(o, "\x1b[?25h\r\x1b[2K").ok();
+                        if bar.ansi_enabled {
+                            write!(o, "\x1b[?25h\r\x1b[2K").ok();
+                        } else {
+                            writeln!(o).ok();
+                        }
                         o.flush().ok();
                     }
                     break;
@@ -159,6 +205,7 @@ impl LiveBar {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn render(&self, spinner: &str) {
         let (cols, _) = terminal::size().unwrap_or((120, 30));
         let cols = cols as usize;
@@ -177,13 +224,23 @@ impl LiveBar {
         let elapsed_str = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
 
         let mut speed = self.speed_value.load(Ordering::Relaxed);
-        if let Ok(mut last_t) = self.speed_last_time.try_lock() {
-            let dt = last_t.elapsed().as_secs();
-            if dt >= 2 {
-                let last_p = self.speed_last_pos.swap(pos, Ordering::Relaxed);
-                speed = pos.saturating_sub(last_p) / dt;
-                self.speed_value.store(speed, Ordering::Relaxed);
-                *last_t = Instant::now();
+        if let Ok(mut history) = self.speed_history.try_lock() {
+            let now = Instant::now();
+            history.push((now, pos));
+
+            let cutoff = now.checked_sub(SPEED_SMOOTHING_WINDOW).unwrap_or(now);
+            while history.len() > 2 && history[1].0 <= cutoff {
+                history.remove(0);
+            }
+
+            if let Some(&(first_t, first_pos)) = history.first() {
+                let dt = now.saturating_duration_since(first_t);
+                if dt >= Duration::from_millis(250)
+                    && let Some(next_speed) = smoothed_speed(pos, first_pos, dt)
+                {
+                    speed = next_speed;
+                    self.speed_value.store(speed, Ordering::Relaxed);
+                }
             }
         }
         if speed == 0 && s > 0 && s < 2 {
@@ -255,6 +312,14 @@ impl LiveBar {
         );
         let bar_raw = format!(" {sp_col} [{elapsed_str}] [{bar_col}{right_col}");
         let bar_line = fit_to_width(&bar_raw, max_vis);
+
+        if !self.ansi_enabled {
+            let mut o = self.out.lock().unwrap();
+            write!(o, "\r[{elapsed_str}] {pct:>3}% | {pos}/{} | ok={ok} blocked={blocked} dead={dead} | {speed}/s | ETA: {eta_str}     ", self.total).ok();
+            o.flush().ok();
+            self.prev_cols.store(cols, Ordering::Relaxed);
+            return;
+        }
 
         // ── erase old 2-line block, redraw ───────────────────────────
         //

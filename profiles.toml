@@ -27,11 +27,23 @@ critical_roles  = ["web", "auth", "api"]
 domain = "chat.openai.com"
 role   = "web"
 probe_paths = ["/", "/auth/login"]
+satisfies_roles = ["auth"]
 
 [[services.hosts]]
 domain = "chatgpt.com"
 role   = "web"
 probe_paths = ["/", "/auth/login"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "sora.com"
+role   = "app"
+probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "sora.chatgpt.com"
+role   = "app"
+probe_paths = ["/"]
 
 [[services.hosts]]
 domain = "auth.openai.com"
@@ -41,7 +53,8 @@ probe_paths = ["/", "/u/login"]
 [[services.hosts]]
 domain = "platform.openai.com"
 role   = "console"
-probe_paths = ["/", "/login"]
+probe_paths = ["/", "/login", "/docs/overview"]
+satisfies_roles = ["auth"]
 
 [[services.hosts]]
 domain = "api.openai.com"
@@ -69,6 +82,12 @@ critical_roles  = ["web", "console", "api"]
 [[services.hosts]]
 domain = "claude.ai"
 role   = "web"
+probe_paths = ["/", "/login"]
+satisfies_roles = ["console"]
+
+[[services.hosts]]
+domain = "platform.claude.com"
+role   = "console"
 probe_paths = ["/", "/login"]
 
 [[services.hosts]]
@@ -122,6 +141,257 @@ domain = "api.perplexity.ai"
 role   = "api"
 probe_paths = ["/"]
 
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Yandex"
+browser_verification = false
+expected_roles = ["search", "auth", "market", "music"]
+critical_roles  = ["search", "auth"]
+
+[[services.hosts]]
+domain = "yandex.ru"
+role   = "search"
+probe_paths = ["/", "/search/?text=bulbascan"]
+
+[[services.hosts]]
+domain = "passport.yandex.ru"
+role   = "auth"
+probe_paths = ["/auth", "/profile"]
+
+[[services.hosts]]
+domain = "id.yandex.ru"
+role   = "auth"
+probe_paths = ["/", "/security"]
+
+[[services.hosts]]
+domain = "market.yandex.ru"
+role   = "market"
+probe_paths = ["/", "/catalog--elektronika/54440"]
+
+[[services.hosts]]
+domain = "music.yandex.ru"
+role   = "music"
+probe_paths = ["/home", "/users/me/tracks"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "VK"
+browser_verification = true
+expected_roles = ["web", "auth", "video"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "vk.com"
+role   = "web"
+probe_paths = ["/", "/feed"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "id.vk.com"
+role   = "auth"
+probe_paths = ["/about/business/go/docs/ru/vkid/latest/vk-id/connection/create-application", "/about/business/go/vk-id"]
+
+[[services.hosts]]
+domain = "vkvideo.ru"
+role   = "video"
+probe_paths = ["/", "/video"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Ozon"
+browser_verification = true
+expected_roles = ["web", "seller", "seller_api"]
+critical_roles  = ["web"]
+
+[[services.hosts]]
+domain = "ozon.ru"
+role   = "web"
+probe_paths = ["/", "/category/elektronika-15500/"]
+
+[[services.hosts]]
+domain = "seller.ozon.ru"
+role   = "seller"
+probe_paths = ["/", "/media/"]
+
+[[services.hosts]]
+domain = "api-seller.ozon.ru"
+role   = "seller_api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Wildberries"
+browser_verification = true
+expected_roles = ["web", "seller"]
+critical_roles  = ["web"]
+
+[[services.hosts]]
+domain = "wildberries.ru"
+role   = "web"
+probe_paths = ["/", "/catalog/0/search.aspx"]
+
+[[services.hosts]]
+domain = "seller.wildberries.ru"
+role   = "seller"
+probe_paths = ["/", "/about-portal/ru"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Mail"
+browser_verification = false
+expected_roles = ["mail", "auth", "cloud"]
+critical_roles  = ["mail", "auth"]
+
+[[services.hosts]]
+domain = "mail.ru"
+role   = "mail"
+probe_paths = ["/", "/inbox/"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "account.mail.ru"
+role   = "auth"
+probe_paths = ["/login", "/signup"]
+
+[[services.hosts]]
+domain = "cloud.mail.ru"
+role   = "cloud"
+probe_paths = ["/home/", "/attaches/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Google"
+browser_verification = false
+expected_roles = ["search", "auth", "account", "play"]
+critical_roles  = ["search", "auth"]
+
+[[services.hosts]]
+domain = "google.com"
+role   = "search"
+probe_paths = ["/", "/search?q=bulbascan"]
+
+[[services.hosts]]
+domain = "accounts.google.com"
+role   = "auth"
+probe_paths = ["/", "/ServiceLogin"]
+
+[[services.hosts]]
+domain = "myaccount.google.com"
+role   = "account"
+probe_paths = ["/", "/intro/personal-info"]
+
+[[services.hosts]]
+domain = "play.google.com"
+role   = "play"
+probe_paths = ["/", "/store"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "YouTube"
+browser_verification = true
+expected_roles = ["web", "creator", "embed"]
+critical_roles  = ["web", "creator"]
+
+[[services.hosts]]
+domain = "youtube.com"
+role   = "web"
+probe_paths = ["/", "/feed/trending"]
+
+[[services.hosts]]
+domain = "m.youtube.com"
+role   = "web"
+probe_paths = ["/", "/feed/trending"]
+
+[[services.hosts]]
+domain = "studio.youtube.com"
+role   = "creator"
+probe_paths = ["/", "/channel/UC"]
+
+[[services.hosts]]
+domain = "youtu.be"
+role   = "embed"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "X"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "x.com"
+role   = "web"
+probe_paths = ["/", "/explore"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "twitter.com"
+role   = "web"
+probe_paths = ["/", "/explore"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "developer.x.com"
+role   = "auth"
+probe_paths = ["/", "/en"]
+
+[[services.hosts]]
+domain = "api.x.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Reddit"
+browser_verification = true
+expected_roles = ["web", "auth", "api"]
+critical_roles  = ["web", "auth"]
+
+[[services.hosts]]
+domain = "reddit.com"
+role   = "web"
+probe_paths = ["/", "/r/popular"]
+satisfies_roles = ["auth"]
+
+[[services.hosts]]
+domain = "www.reddit.com"
+role   = "auth"
+probe_paths = ["/login/", "/register/"]
+
+[[services.hosts]]
+domain = "api.reddit.com"
+role   = "api"
+probe_paths = ["/"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[services]]
+name = "Netflix"
+browser_verification = true
+expected_roles = ["storefront", "auth", "playback"]
+critical_roles  = ["storefront", "playback"]
+
+[[services.hosts]]
+domain = "netflix.com"
+role   = "storefront"
+probe_paths = ["/", "/browse", "/login"]
+satisfies_roles = ["auth", "playback"]
+
+[[services.hosts]]
+domain = "www.netflix.com"
+role   = "playback"
+probe_paths = ["/", "/browse"]
+
 # ─── Financial ────────────────────────────────────────────────────────────────
 
 [[services]]
@@ -133,7 +403,8 @@ critical_roles  = ["web", "auth", "api"]
 [[services.hosts]]
 domain = "wise.com"
 role   = "web"
-probe_paths = ["/", "/login"]
+probe_paths = ["/", "/login", "/business", "/business/api"]
+satisfies_roles = ["auth"]
 
 [[services.hosts]]
 domain = "login.wise.com"
@@ -244,11 +515,12 @@ critical_roles  = ["storefront", "playback"]
 domain = "disneyplus.com"
 role   = "storefront"
 probe_paths = ["/", "/welcome"]
+satisfies_roles = ["playback"]
 
 [[services.hosts]]
 domain = "www.disneyplus.com"
 role   = "playback"
-probe_paths = ["/", "/welcome"]
+probe_paths = ["/", "/welcome", "/login"]
 
 [[services.hosts]]
 domain = "auth.disneyplus.com"
@@ -306,23 +578,29 @@ probe_paths = ["/", "/signin"]
 [[services]]
 name = "Deezer"
 browser_verification = true
-expected_roles = ["web", "player", "api"]
+expected_roles = ["web", "player", "api", "auth"]
 critical_roles  = ["web", "player"]
 
 [[services.hosts]]
 domain = "deezer.com"
 role   = "web"
-probe_paths = ["/"]
+probe_paths = ["/", "/login"]
+satisfies_roles = ["player"]
 
 [[services.hosts]]
 domain = "www.deezer.com"
 role   = "player"
-probe_paths = ["/", "/en/channels/explore"]
+probe_paths = ["/", "/en/channels/explore", "/login"]
 
 [[services.hosts]]
 domain = "api.deezer.com"
 role   = "api"
 probe_paths = ["/"]
+
+[[services.hosts]]
+domain = "connect.deezer.com"
+role   = "auth"
+probe_paths = ["/oauth/auth.php", "/login"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -574,16 +852,22 @@ critical_roles  = ["web", "app"]
 domain = "tiktok.com"
 role   = "web"
 probe_paths = ["/", "/explore"]
+satisfies_roles = ["app"]
 
 [[services.hosts]]
 domain = "www.tiktok.com"
 role   = "app"
-probe_paths = ["/", "/explore"]
+probe_paths = ["/", "/explore", "/login"]
 
 [[services.hosts]]
 domain = "m.tiktok.com"
 role   = "web"
-probe_paths = ["/", "/explore"]
+probe_paths = ["/", "/explore", "/login"]
+
+[[services.hosts]]
+domain = "developers.tiktok.com"
+role   = "api"
+probe_paths = ["/", "/doc/login/"]
 
 [[services.hosts]]
 domain = "tiktokv.com"

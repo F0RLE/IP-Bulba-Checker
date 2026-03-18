@@ -3,10 +3,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use hickory_resolver::TokioResolver;
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::{ResolveError, ResolveErrorKind};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, Error as RustlsError, SignatureScheme};
-use tokio::net::{TcpStream, lookup_host};
+use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector as RustlsTlsConnector;
 
 use crate::signatures;
@@ -79,37 +82,116 @@ pub(crate) fn build_tls_connector() -> RustlsTlsConnector {
     RustlsTlsConnector::from(Arc::new(config))
 }
 
-pub(crate) async fn resolve_host(host: &str, timeout_secs: u64) -> (ProbeEvidence, Vec<IpAddr>) {
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), lookup_host((host, 443))).await {
-        Ok(Ok(resolved)) => {
-            let mut ips = Vec::new();
-            for addr in resolved {
-                let ip = addr.ip();
-                if !ips.contains(&ip) {
-                    ips.push(ip);
-                }
-                if ips.len() >= 4 {
-                    break;
-                }
-            }
+const DNS_CONTROL_HOST: &str = "example.com";
 
-            if ips.is_empty() {
-                (ProbeEvidence::failed("resolved no addresses"), Vec::new())
+fn build_system_resolver() -> TokioResolver {
+    TokioResolver::builder_tokio()
+        .unwrap_or_else(|_| {
+            TokioResolver::builder_with_config(
+                ResolverConfig::google(),
+                hickory_resolver::name_server::TokioConnectionProvider::default(),
+            )
+        })
+        .build()
+}
+
+fn categorize_system_dns_error(err: &ResolveError) -> &'static str {
+    if err.is_nx_domain() {
+        return "nxdomain";
+    }
+    if err.is_no_records_found() {
+        return "nodata";
+    }
+
+    let lower = err.to_string().to_ascii_lowercase();
+    match err.kind() {
+        ResolveErrorKind::Proto(_) => {
+            if lower.contains("servfail") {
+                "servfail"
+            } else if lower.contains("refused") {
+                "refused"
+            } else if lower.contains("timed out") || lower.contains("timeout") {
+                "timeout"
             } else {
-                let preview = ips
-                    .iter()
-                    .take(2)
-                    .map(std::string::ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                (ProbeEvidence::ok(preview), ips)
+                "proto"
             }
         }
-        Ok(Err(err)) => (
-            ProbeEvidence::failed(format!("dns lookup failed: {err}")),
+        ResolveErrorKind::Message(_) | ResolveErrorKind::Msg(_) => {
+            if lower.contains("timed out") || lower.contains("timeout") {
+                "timeout"
+            } else {
+                "other"
+            }
+        }
+        _ => "other",
+    }
+}
+
+async fn resolve_with_system_resolver(
+    resolver: &TokioResolver,
+    host: &str,
+    timeout_secs: u64,
+) -> Result<Vec<IpAddr>, ResolveError> {
+    let lookup = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        resolver.lookup_ip(host.to_string()),
+    )
+    .await;
+
+    match lookup {
+        Ok(Ok(lookup)) => Ok(lookup.iter().take(4).collect::<Vec<_>>()),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(ResolveError::from("dns timeout")),
+    }
+}
+
+async fn system_resolver_health_note(
+    resolver: &TokioResolver,
+    timeout_secs: u64,
+) -> Option<&'static str> {
+    match resolve_with_system_resolver(resolver, DNS_CONTROL_HOST, timeout_secs).await {
+        Ok(ips) if !ips.is_empty() => Some("resolver_control_ok"),
+        Ok(_) => Some("resolver_control_empty"),
+        Err(err) => {
+            let kind = categorize_system_dns_error(&err);
+            Some(match kind {
+                "timeout" => "resolver_control_timeout",
+                "servfail" => "resolver_control_servfail",
+                "nxdomain" => "resolver_control_nxdomain",
+                "nodata" => "resolver_control_nodata",
+                "refused" => "resolver_control_refused",
+                _ => "resolver_control_failed",
+            })
+        }
+    }
+}
+
+pub(crate) async fn resolve_host(host: &str, timeout_secs: u64) -> (ProbeEvidence, Vec<IpAddr>) {
+    let resolver = build_system_resolver();
+    match resolve_with_system_resolver(&resolver, host, timeout_secs).await {
+        Ok(ips) if ips.is_empty() => (
+            ProbeEvidence::failed("kind=nodata resolved no addresses"),
             Vec::new(),
         ),
-        Err(_) => (ProbeEvidence::failed("dns lookup timed out"), Vec::new()),
+        Ok(ips) => {
+            let preview = ips
+                .iter()
+                .take(2)
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            (ProbeEvidence::ok(preview), ips)
+        }
+        Err(err) => {
+            let kind = categorize_system_dns_error(&err);
+            let resolver_health = system_resolver_health_note(&resolver, timeout_secs)
+                .await
+                .unwrap_or("resolver_control_unknown");
+            (
+                ProbeEvidence::failed(format!("kind={kind} {resolver_health}: {err}")),
+                Vec::new(),
+            )
+        }
     }
 }
 

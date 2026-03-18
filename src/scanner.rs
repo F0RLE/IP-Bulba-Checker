@@ -1,15 +1,15 @@
 use console::Style;
-use reqwest::Client as FallbackClient;
+use rquest::Client;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector as RustlsTlsConnector;
-use wreq::{Client, header, tls::TlsOptions};
-use wreq_util::Emulation;
 
 use crate::service_profiles;
 use crate::signatures;
@@ -23,9 +23,9 @@ mod reports;
 mod transport;
 pub(crate) mod types;
 use analysis::{
-    analyze_http_observation, classify_browser_html, classify_transport_error,
-    relax_infra_root_result, same_measurement, should_try_retest, stabilize_scan_attempts,
-    status_from_verdict, verdict_rank,
+    analyze_http_observation, apply_dns_evidence_adjustment, classify_browser_html,
+    classify_transport_error, infer_challenge_family, relax_infra_root_result, same_measurement,
+    should_try_retest, stabilize_scan_attempts, status_from_verdict, verdict_rank,
 };
 use browser::{
     browser_proxy_server_arg, detect_browser_binary, run_browser_dom_dump,
@@ -36,8 +36,11 @@ pub(crate) use comparison::{
     write_control_comparison_report, write_control_proxy_health, write_service_geo_report,
 };
 use network::collect_network_evidence;
-pub(crate) use reports::{write_human_report, write_routing_lists, write_service_report};
-use transport::{build_request, send_via_reqwest, send_with_retries};
+pub(crate) use reports::{
+    write_human_report, write_manual_review_hotspot_report, write_routing_lists,
+    write_service_report,
+};
+use transport::{build_request, send_via_rquest, send_with_retries};
 pub(crate) use transport::{preflight_control_proxy, should_run_control_comparison};
 #[allow(unused_imports)]
 pub use types::{
@@ -89,7 +92,7 @@ pub async fn run_scan(
     verbose: bool,
     format: String,
     scan_policy: ScanPolicy,
-    record_size_limit: Option<u16>,
+    _record_size_limit: Option<u16>,
     signatures_file: Option<PathBuf>,
     max_body_size: usize,
     potato: bool,
@@ -106,41 +109,17 @@ pub async fn run_scan(
         .max(worker_count.saturating_mul(4));
 
     // 1. Setup Base Client with Browser Evasion
-    let accept_languages = [
-        "en-US,en;q=0.9",
-        "en-US,en;q=0.5",
-        "en-GB,en;q=0.9,en-US;q=0.8",
-        "en-US,en;q=0.9,ru;q=0.8",
-    ];
-    let accept_language = accept_languages[fastrand::usize(..accept_languages.len())];
-
-    let mut headers = header::HeaderMap::new();
-    headers.insert(
-        header::ACCEPT_LANGUAGE,
-        header::HeaderValue::from_str(accept_language).expect("valid accept-language"),
-    );
-    headers.insert("dnt", header::HeaderValue::from_static("1"));
-
-    let mut tls_builder = TlsOptions::builder();
-    tls_builder = tls_builder.enable_ech_grease(false);
-    if let Some(limit) = record_size_limit {
-        tls_builder = tls_builder.record_size_limit(limit);
-    }
-
     let client = Client::builder()
-        .emulation(Emulation::Chrome145)
-        .default_headers(headers)
-        .tls_options(tls_builder.build())
+        .emulation(rquest_util::Emulation::Chrome133)
         .timeout(Duration::from_secs(timeout_secs))
-        .redirect(wreq::redirect::Policy::limited(max_redirects))
+        .redirect(rquest::redirect::Policy::limited(max_redirects))
         .build()?;
 
-    let fallback_client = FallbackClient::builder()
+    let fallback_client = Client::builder()
         .brotli(true)
         .gzip(true)
         .zstd(true)
-        .http2_adaptive_window(true)
-        .redirect(reqwest::redirect::Policy::limited(max_redirects))
+        .redirect(rquest::redirect::Policy::limited(max_redirects))
         .timeout(Duration::from_secs(timeout_secs))
         .build()?;
 
@@ -150,6 +129,8 @@ pub async fn run_scan(
             .map(PathBuf::from)
             .or_else(detect_browser_binary),
     );
+    let browser_budget = Arc::new(AtomicUsize::new(scan_policy.max_browser_verifications));
+    let challenge_family_cache = Arc::new(Mutex::new(HashSet::<String>::new()));
     let proxies = Arc::new(proxies);
     let matcher = Arc::new(signatures::BlockMatcher::new(signatures_file.as_deref())?);
     let proxy_index = Arc::new(AtomicUsize::new(0));
@@ -293,6 +274,8 @@ pub async fn run_scan(
         let fallback_client = fallback_client.clone();
         let tls_connector = tls_connector.clone();
         let browser_binary = browser_binary.clone();
+        let browser_budget = browser_budget.clone();
+        let challenge_family_cache = challenge_family_cache.clone();
         let logger_tx = logger_tx.clone();
         let work_rx = work_rx.clone();
         let proxies = proxies.clone();
@@ -332,6 +315,8 @@ pub async fn run_scan(
                                     &fallback_client,
                                     &tls_connector,
                                     browser_binary.as_deref(),
+                                    browser_budget.clone(),
+                                    challenge_family_cache.clone(),
                                     domain.clone(),
                                     &matcher,
                                     proxy.as_ref(),
@@ -554,46 +539,29 @@ fn pick_preferred_result(initial: ScanResult, retry: ScanResult) -> ScanResult {
     if retry_wins { retry } else { initial }
 }
 
-/// Read up to `max_body_size` bytes from any response type that exposes
-/// `async fn chunk(&mut self) -> Result<Option<Bytes>>`. Using a macro
-/// avoids duplicating identical logic across `wreq::Response` and
-/// `reqwest::Response` which share the same API but have no common trait.
-macro_rules! read_body_limited {
-    ($response:expr, $max_body_size:expr) => {{
-        let max = $max_body_size;
-        let mut body = Vec::with_capacity(max.min(65_536));
-        loop {
-            match $response.chunk().await {
-                Ok(Some(chunk)) => {
-                    let remaining = max.saturating_sub(body.len());
-                    if remaining == 0 {
-                        break;
-                    }
-                    body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-                    if body.len() >= max {
-                        break;
-                    }
+async fn read_response_body_limited(
+    response: &mut rquest::Response,
+    max_body_size: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let max = max_body_size;
+    let mut body = Vec::with_capacity(max.min(65_536));
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let remaining = max.saturating_sub(body.len());
+                if remaining == 0 {
+                    break;
                 }
-                Ok(None) => break,
-                Err(err) => return Err(err.into()),
+                body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                if body.len() >= max {
+                    break;
+                }
             }
+            Ok(None) => break,
+            Err(err) => return Err(err.into()),
         }
-        anyhow::Ok(body)
-    }};
-}
-
-async fn read_wreq_body_limited(
-    response: &mut wreq::Response,
-    max_body_size: usize,
-) -> anyhow::Result<Vec<u8>> {
-    read_body_limited!(response, max_body_size)
-}
-
-async fn read_reqwest_body_limited(
-    response: &mut reqwest::Response,
-    max_body_size: usize,
-) -> anyhow::Result<Vec<u8>> {
-    read_body_limited!(response, max_body_size)
+    }
+    Ok(body)
 }
 
 fn probe_paths_for_domain(domain: &str) -> Vec<String> {
@@ -624,9 +592,11 @@ fn is_meaningful_secondary_result(result: &ScanResult) -> bool {
 #[allow(clippy::too_many_arguments)]
 async fn scan_domain_once(
     client: &Client,
-    fallback_client: &FallbackClient,
+    fallback_client: &Client,
     tls_connector: &RustlsTlsConnector,
     browser_binary: Option<&Path>,
+    browser_budget: Arc<AtomicUsize>,
+    challenge_family_cache: Arc<Mutex<HashSet<String>>>,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -689,13 +659,30 @@ async fn scan_domain_once(
         }
     }
 
-    if let Some(browser_path) = browser_binary
+    let known_challenge_family = infer_challenge_family(&best_result).and_then(|family| {
+        challenge_family_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.contains(family).then_some(family))
+    });
+
+    if let Some(family) = known_challenge_family {
+        best_result.reason = format!(
+            "{} | browser skipped: reused challenge family={family}",
+            best_result.reason
+        );
+    } else if let Some(browser_path) = browser_binary
         && should_try_browser_verify(&best_result, &domain)
         && (proxy.is_none()
             || (scan_policy.allow_control_browser_verify
                 && proxy
                     .and_then(|proxy| browser_proxy_server_arg(proxy))
                     .is_some()))
+        && browser_budget
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
     {
         for path in probe_paths_for_domain(&domain)
             .iter()
@@ -724,6 +711,12 @@ async fn scan_domain_once(
                 best_result = browser_result;
             }
 
+            if let Some(family) = infer_challenge_family(&best_result)
+                && let Ok(mut cache) = challenge_family_cache.lock()
+            {
+                cache.insert(family.to_string());
+            }
+
             if matches!(
                 best_result.verdict,
                 Verdict::GeoBlocked | Verdict::WafBlocked
@@ -734,16 +727,19 @@ async fn scan_domain_once(
         }
     }
 
-    best_result.network_evidence = network_evidence;
+    best_result.network_evidence = network_evidence.clone();
+    best_result = apply_dns_evidence_adjustment(best_result, &network_evidence);
     Ok(best_result)
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn scan_domain(
     client: &Client,
-    fallback_client: &FallbackClient,
+    fallback_client: &Client,
     tls_connector: &RustlsTlsConnector,
     browser_binary: Option<&Path>,
+    browser_budget: Arc<AtomicUsize>,
+    challenge_family_cache: Arc<Mutex<HashSet<String>>>,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -759,6 +755,8 @@ async fn scan_domain(
             fallback_client,
             tls_connector,
             browser_binary,
+            browser_budget.clone(),
+            challenge_family_cache.clone(),
             domain.clone(),
             matcher,
             proxy,
@@ -800,6 +798,8 @@ async fn scan_domain(
                 fallback_client,
                 tls_connector,
                 browser_binary,
+                browser_budget.clone(),
+                challenge_family_cache.clone(),
                 domain.clone(),
                 matcher,
                 proxy,
@@ -826,7 +826,7 @@ async fn scan_domain(
 #[allow(clippy::too_many_arguments)]
 async fn check_domain(
     client: &Client,
-    fallback_client: &FallbackClient,
+    fallback_client: &Client,
     domain: String,
     matcher: &signatures::BlockMatcher,
     proxy: Option<&String>,
@@ -863,7 +863,7 @@ async fn check_domain(
             let status = response.status();
             let code = status.as_u16();
             let status_label = status.to_string();
-            let final_url = response.uri().to_string();
+            let final_url = response.url().to_string();
             let headers = response
                 .headers()
                 .iter()
@@ -874,7 +874,7 @@ async fn check_domain(
                 })
                 .collect::<Vec<_>>();
 
-            let body_raw = read_wreq_body_limited(&mut response, max_body_size).await?;
+            let body_raw = read_response_body_limited(&mut response, max_body_size).await?;
 
             let initial_result = analyze_http_observation(
                 domain.clone(),
@@ -921,7 +921,7 @@ async fn check_domain(
                     let r_status = retry_resp.status();
                     let r_code = r_status.as_u16();
                     let r_label = r_status.to_string();
-                    let r_final_url = retry_resp.uri().to_string();
+                    let r_final_url = retry_resp.url().to_string();
                     let r_headers: Vec<(String, String)> = retry_resp
                         .headers()
                         .iter()
@@ -932,7 +932,7 @@ async fn check_domain(
                         })
                         .collect();
 
-                    let r_body = read_wreq_body_limited(&mut retry_resp, max_body_size).await?;
+                    let r_body = read_response_body_limited(&mut retry_resp, max_body_size).await?;
 
                     let retry_result = analyze_http_observation(
                         domain.clone(),
@@ -956,13 +956,13 @@ async fn check_domain(
             let kind = classify_transport_error(&reason);
 
             if kind == TransportErrorKind::Unreachable {
-                let fallback_response = send_via_reqwest(fallback_client, &url, ua).await;
+                let fallback_response = send_via_rquest(fallback_client, &url, ua).await;
 
                 if let Ok(mut response) = fallback_response {
                     let status = response.status();
                     let code = status.as_u16();
                     let status_label = status.to_string();
-                    let final_url = response.url().as_str().to_owned();
+                    let final_url = response.url().to_string();
                     let headers = response
                         .headers()
                         .iter()
@@ -973,7 +973,7 @@ async fn check_domain(
                         })
                         .collect::<Vec<_>>();
 
-                    let body_raw = read_reqwest_body_limited(&mut response, max_body_size).await?;
+                    let body_raw = read_response_body_limited(&mut response, max_body_size).await?;
 
                     return Ok(analyze_http_observation(
                         domain,

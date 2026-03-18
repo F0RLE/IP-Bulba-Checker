@@ -2,7 +2,7 @@
 //!
 //! Profiles are loaded from a `profiles.toml` file located next to the binary at
 //! startup. If the file is absent, the compiled-in copy is used as a fallback.
-//! This means all 60+ service profiles can be updated by editing `profiles.toml`
+//! This means all bundled service profiles can be updated by editing `profiles.toml`
 //! without recompiling.
 //!
 //! # Extension
@@ -42,6 +42,8 @@ struct TomlHost {
     domain: String,
     role: String,
     probe_paths: Vec<String>,
+    #[serde(default)]
+    satisfies_roles: Vec<String>,
 }
 
 // ─── Runtime types ────────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ struct HostEntry {
     domain: String,
     role: String,
     probe_paths: Vec<String>,
+    satisfies_roles: Vec<String>,
 }
 
 // ─── Public API types ─────────────────────────────────────────────────────────
@@ -68,6 +71,7 @@ pub(crate) struct ServiceMatch {
     pub(crate) host_role: String,
     pub(crate) probe_paths: Vec<String>,
     pub(crate) browser_verification: bool,
+    pub(crate) satisfies_roles: Vec<String>,
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -119,6 +123,7 @@ fn build_registry(config: TomlConfig) -> ProfileRegistry {
                     domain: h.domain,
                     role: h.role,
                     probe_paths: h.probe_paths,
+                    satisfies_roles: h.satisfies_roles,
                 })
                 .collect(),
         })
@@ -200,6 +205,7 @@ pub(crate) fn match_target(domain: &str) -> Option<ServiceMatch> {
                     host_role: host_entry.role.clone(),
                     probe_paths: host_entry.probe_paths.clone(),
                     browser_verification: profile.browser_verification,
+                    satisfies_roles: host_entry.satisfies_roles.clone(),
                 };
 
                 if best
@@ -213,6 +219,10 @@ pub(crate) fn match_target(domain: &str) -> Option<ServiceMatch> {
     }
 
     best.map(|(_, m)| m)
+}
+
+pub(crate) fn satisfied_roles(target: &str) -> Vec<String> {
+    match_target(target).map_or_else(Vec::new, |m| m.satisfies_roles)
 }
 
 /// Return the probe paths for a given target, or `["/"]` if unknown.
@@ -291,6 +301,7 @@ mod tests {
         let matched = match_target("https://platform.openai.com/login").unwrap();
         assert_eq!(matched.service_name, "OpenAI");
         assert_eq!(matched.host_role, "console");
+        assert!(matched.satisfies_roles.iter().any(|role| role == "auth"));
     }
 
     #[test]
@@ -312,6 +323,11 @@ mod tests {
         let chat = match_target("chat.openai.com").unwrap();
         assert_eq!(chat.service_name, "OpenAI");
         assert_eq!(chat.host_role, "web");
+        assert!(chat.satisfies_roles.iter().any(|role| role == "auth"));
+
+        let claude_console = match_target("platform.claude.com").unwrap();
+        assert_eq!(claude_console.service_name, "Anthropic");
+        assert_eq!(claude_console.host_role, "console");
 
         let upwork_api = match_target("api.upwork.com").unwrap();
         assert_eq!(upwork_api.service_name, "Upwork");
@@ -320,6 +336,14 @@ mod tests {
         let perplexity_api = match_target("api.perplexity.ai").unwrap();
         assert_eq!(perplexity_api.service_name, "Perplexity");
         assert_eq!(perplexity_api.host_role, "api");
+
+        let google_auth = match_target("accounts.google.com").unwrap();
+        assert_eq!(google_auth.service_name, "Google");
+        assert_eq!(google_auth.host_role, "auth");
+
+        let yandex_auth = match_target("passport.yandex.ru").unwrap();
+        assert_eq!(yandex_auth.service_name, "Yandex");
+        assert_eq!(yandex_auth.host_role, "auth");
     }
 
     #[test]
@@ -331,6 +355,24 @@ mod tests {
         let disney_auth = match_target("auth.disneyplus.com").unwrap();
         assert_eq!(disney_auth.service_name, "Disney+");
         assert_eq!(disney_auth.host_role, "auth");
+
+        let deezer_auth = match_target("connect.deezer.com").unwrap();
+        assert_eq!(deezer_auth.service_name, "Deezer");
+        assert_eq!(deezer_auth.host_role, "auth");
+
+        let youtube_creator = match_target("studio.youtube.com").unwrap();
+        assert_eq!(youtube_creator.service_name, "YouTube");
+        assert_eq!(youtube_creator.host_role, "creator");
+
+        let netflix = match_target("netflix.com").unwrap();
+        assert_eq!(netflix.service_name, "Netflix");
+        assert_eq!(netflix.host_role, "storefront");
+        assert!(
+            netflix
+                .satisfies_roles
+                .iter()
+                .any(|role| role == "playback")
+        );
 
         let tidal_auth = match_target("login.tidal.com").unwrap();
         assert_eq!(tidal_auth.service_name, "TIDAL");
@@ -347,6 +389,21 @@ mod tests {
         assert_eq!(instagram_assets.service_name, "Meta");
         assert_eq!(instagram_assets.host_role, "assets");
 
+        let x = match_target("x.com").unwrap();
+        assert_eq!(x.service_name, "X");
+        assert_eq!(x.host_role, "web");
+        assert!(x.satisfies_roles.iter().any(|role| role == "auth"));
+
+        let reddit = match_target("reddit.com").unwrap();
+        assert_eq!(reddit.service_name, "Reddit");
+        assert_eq!(reddit.host_role, "web");
+        assert!(reddit.satisfies_roles.iter().any(|role| role == "auth"));
+
+        let vk = match_target("vk.com").unwrap();
+        assert_eq!(vk.service_name, "VK");
+        assert_eq!(vk.host_role, "web");
+        assert!(vk.satisfies_roles.iter().any(|role| role == "auth"));
+
         let playstation_api = match_target("playstation.net").unwrap();
         assert_eq!(playstation_api.service_name, "PlayStation");
         assert_eq!(playstation_api.host_role, "api");
@@ -357,6 +414,10 @@ mod tests {
         let tiktok_api = match_target("tiktokv.com").unwrap();
         assert_eq!(tiktok_api.service_name, "TikTok");
         assert_eq!(tiktok_api.host_role, "api");
+
+        let tiktok_developers = match_target("developers.tiktok.com").unwrap();
+        assert_eq!(tiktok_developers.service_name, "TikTok");
+        assert_eq!(tiktok_developers.host_role, "api");
 
         let tiktok_www = match_target("www.tiktok.com").unwrap();
         assert_eq!(tiktok_www.service_name, "TikTok");
@@ -373,6 +434,36 @@ mod tests {
         let avast = match_target("avast.com").unwrap();
         assert_eq!(avast.service_name, "Avast");
         assert_eq!(avast.host_role, "web");
+
+        let tiktok = match_target("tiktok.com").unwrap();
+        assert!(tiktok.satisfies_roles.iter().any(|role| role == "app"));
+
+        let ozon_seller = match_target("seller.ozon.ru").unwrap();
+        assert_eq!(ozon_seller.service_name, "Ozon");
+        assert_eq!(ozon_seller.host_role, "seller");
+
+        let wildberries_seller = match_target("seller.wildberries.ru").unwrap();
+        assert_eq!(wildberries_seller.service_name, "Wildberries");
+        assert_eq!(wildberries_seller.host_role, "seller");
+
+        let mail_auth = match_target("account.mail.ru").unwrap();
+        assert_eq!(mail_auth.service_name, "Mail");
+        assert_eq!(mail_auth.host_role, "auth");
+    }
+
+    #[test]
+    fn exposes_satisfied_roles_for_multi_role_hosts() {
+        let openai = satisfied_roles("chatgpt.com");
+        assert!(openai.iter().any(|role| role == "auth"));
+
+        let wise = satisfied_roles("wise.com");
+        assert!(wise.iter().any(|role| role == "auth"));
+
+        let disney = satisfied_roles("disneyplus.com");
+        assert!(disney.iter().any(|role| role == "playback"));
+
+        let deezer = satisfied_roles("deezer.com");
+        assert!(deezer.iter().any(|role| role == "player"));
     }
 
     #[test]

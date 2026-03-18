@@ -1,89 +1,231 @@
-# Output Files and Export Profiles
+# Output Files
 
-> All output files are written to `--results-dir` (defaults to `results_<input-filename>` next to the input file).
+> All outputs are written into `--results-dir`.
+>
+> Bulbascan now groups outputs by format:
+> - `txt/`
+> - `json/`
+> - `yaml/`
+> - `bin/`
+
+---
+
+## Main Idea
+
+The results directory is split by file type so the top level stays clean.
+
+Use these first:
+
+- `txt/publication.txt`
+- `txt/publish-strict.txt`
+- `txt/publish-review.txt`
+- `txt/publish-direct.txt`
+
+Use these for diagnostics:
+
+- `txt/comparison.txt`
+- `txt/service-geo.txt`
+- `txt/validation.txt`
+- `txt/hotspots.txt`
+
+Router and client exports live in:
+
+- `json/`
+- `yaml/`
+- `bin/`
 
 ---
 
 ## Export Profiles
 
-### 1. `simple` (default)
-Essential outputs for basic blocklist creation and drag-and-drop usage.
+### `simple` (default)
 
-| File | Contents |
+Minimal outputs for basic usage.
+
+| Path | Contents |
 |---|---|
-| `blocked-domains.txt` | Plain list of proxy-required domains (format controlled by `--blocked-list-format`) |
-| `geosite.dat` | V2Ray/Xray geosite binary |
-| `blocked.log` | Detailed audit log of all blocked/geo-blocked domains |
-| `ok.log` | Log of all accessible (direct) domains |
+| `txt/blocked.txt` | Blocked-domain list in the format selected by `--blocked-list-format` |
+| `txt/blocked.log` | Detailed log for non-direct results |
+| `bin/geosite.dat` | Generated geosite binary |
+| `txt/ok.log` | Detailed log for direct results during the run |
 
-### 2. `router`
-Adds firmware-native routing rules and advanced comparison reports.
+Note:
 
-Everything in **Simple**, plus:
+- in `simple`, `txt/ok.log` is created during the scan and then removed at the end
+- the main outputs are `txt/blocked.txt` and `bin/geosite.dat`
 
-| File | Contents |
+### `router`
+
+Adds routing lists, reports, and router/client exports.
+
+Everything in `simple`, plus:
+
+| Path | Contents |
 |---|---|
-| `report.txt` | Human-readable scan summary with distribution stats |
-| `services_report.txt` | Service-level grouping and verdict confidence |
-| `proxy_required.txt` | All proxy-required domains as a newline-delimited list |
-| `direct_ok.txt` | All confirmed direct domains as a newline-delimited list |
-| `manual_review.txt` | Ambiguous domains flagged for manual check |
-| `sing-box-rule-set.json` | sing-box domain rule-set (Version 4) |
-| `sing-box-route-snippet.json` | sing-box route rule snippet connecting the rule-set |
-| `xray-routing-rule.json` | Xray routing rule (`full:domain` format) |
-| `openwrt-pbr-domains.txt` | Domain policies for OpenWrt PBR |
-| `openwrt-dnsmasq-ipset.conf` | `ipset=` configuration snippet for `dnsmasq-full` |
-| `strict-*` | **Dual-vantage confirmed** variants of all the above (requires `--control-proxy`) |
-| `known-service-bundle-*` | Minimal per-service host sets covering all critical roles |
-| `generic-apex-bypass-*` | Apex-level fallback rules for non-profiled domains |
-| `comparison_report.txt` | Local vs Control-vantage comparison analysis |
-| `confirmed_proxy_required.txt` | Domains confirmed proxy-required by dual-vantage |
-| `control_proxy_health.txt` | Health preflight result for the control proxy |
-| `service_geo_report.txt` | High-confidence service-level geo conclusions |
+| `txt/report.txt` | Human-readable summary |
+| `txt/services.txt` | Service-grouped summary |
+| `txt/proxy.txt` | Domains classified as `ProxyRequired` |
+| `txt/direct.txt` | Domains classified as `DirectOk` |
+| `txt/review.txt` | Domains classified as `ManualReview` |
+| `txt/comparison.txt` | Local-vs-control comparison report |
+| `txt/confirmed.txt` | Domains confirmed by dual-vantage comparison |
+| `txt/control-health.txt` | Control-proxy preflight report |
+| `txt/service-geo.txt` | Service-level geo summary |
+| `txt/publication.txt` | Publication-tier and rescan guidance |
+| `txt/publish-*.txt` | Publication lists: strict, review, direct |
+| `txt/rescan-*.txt` | Hot/warm/cold refresh queues |
+| `json/` | sing-box and Xray JSON exports |
+| `yaml/` | Mihomo provider snippets |
+| `bin/` | `geosite.dat`, `.srs`, `.mrs` when local compilers are available |
 
-### 3. `full`
-Includes detailed diagnostic reports for accuracy validation.
+`router` keeps the output surface focused on the main operator and deployment files.
 
-Everything in **Router**, plus:
+### `full`
 
-| File | Contents |
+Adds validation output on top of `router`.
+
+| Path | Contents |
 |---|---|
-| `validation_report.txt` | Accuracy report comparing results against expected annotations |
+| `txt/validation.txt` | Validation report against annotated expected outcomes |
+| `bundle*` outputs | Known-service minimal bundles |
+| `apex*` outputs | Generic apex bypass exports for unmapped domains |
 
 ---
 
-## Export strategy
+## Folder Layout
 
-Router exports are intentionally conservative:
+### `txt/`
 
-- **`sing-box`** uses exact `domain` matches — no wildcards
-- **`Xray`** uses exact `full:` matches
-- **`OpenWRT`** gets both a PBR domain list and `dnsmasq-full` `ipset=` snippets
-- **`strict-*`** variants include only dual-vantage **confirmed** domains (strongest signal)
-- **`known-service-bundle-*`** — smallest host set per service that still covers all critical roles
-- **`generic-apex-bypass-*`** — apex-level fallback for the non-profiled long tail
+Human-facing reports, flat lists, logs, and text-based router files.
+
+Common files:
+
+- `blocked.txt`
+- `proxy.txt`
+- `direct.txt`
+- `review.txt`
+- `confirmed.txt`
+- `report.txt`
+- `services.txt`
+- `comparison.txt`
+- `control-health.txt`
+- `service-geo.txt`
+- `hotspots.txt`
+- `validation.txt`
+- `publication.txt`
+- `publish-strict.txt`
+- `publish-review.txt`
+- `publish-direct.txt`
+- `rescan-hot.txt`
+- `rescan-warm.txt`
+- `rescan-cold.txt`
+
+OpenWrt / dnsmasq text exports also live here:
+
+- `openwrt.txt`
+- `dnsmasq.conf`
+- `strict-openwrt.txt`
+- `strict-dnsmasq.conf`
+- `bundle-openwrt.txt`
+- `bundle-dnsmasq.conf`
+- `apex-openwrt.txt`
+- `apex-dnsmasq.conf`
+
+### `json/`
+
+JSON exports for sing-box and Xray.
+
+Main set:
+
+- `sing-box.json`
+- `sing-box-route.json`
+- `sing-box-binary-route.json`
+- `xray.json`
+
+Other scopes:
+
+- `strict*.json`
+- `bundle*.json`
+- `apex*.json`
+
+### `yaml/`
+
+Mihomo provider snippets.
+
+Main set:
+
+- `mihomo.yaml`
+- `mihomo-binary.yaml`
+
+Other scopes:
+
+- `strict*.yaml`
+- `bundle*.yaml`
+- `apex*.yaml`
+
+### `bin/`
+
+Binary artifacts.
+
+Main set:
+
+- `geosite.dat`
+- `sing-box.srs`
+- `mihomo.mrs`
+
+Other scopes:
+
+- `strict.*`
+- `bundle.*`
+- `apex.*`
 
 ---
 
-## Blocked list formats
+## Output Strategy
 
-Controlled by `--blocked-list-format`:
+Use these tiers:
 
-| Format | Output example | Use case |
-|---|---|---|
-| `plain` | `example.com` | Simple blocklists, most routers |
-| `geosite-source` | `full:example.com` | Merging into V2Ray geosite source files |
+- `txt/publish-strict.txt`
+  Best publication-grade list.
+- `txt/publish-review.txt`
+  Keep for later refresh cycles and human review.
+- `txt/publish-direct.txt`
+  Stable direct-ok set.
+
+Use these diagnostics when something looks off:
+
+- `txt/comparison.txt`
+- `txt/service-geo.txt`
+- `txt/validation.txt`
+- `txt/hotspots.txt`
+
+Treat specialized `bundle*` and `apex*` exports as advanced compatibility outputs. They are generated only in `full`.
 
 ---
 
-## Local state directory
+## State Directory
 
-When `--state-dir` is set, the scanner also maintains:
+Bulbascan keeps persistent state in `results_dir/state` by default.
+
+If `--state-dir` is provided, that explicit location is used instead.
+
+The state directory maintains:
 
 | File | Contents |
 |---|---|
-| `blocked.txt` | Confirmed proxy-required (persistent) |
-| `direct.txt` | Confirmed direct-ok (persistent) |
-| `manual_review.txt` | Uncertain — rescanned on the next run |
+| `blocked.txt` | Persisted blocked/proxy-required set |
+| `direct.txt` | Persisted direct-ok set |
+| `manual_review.txt` | Persisted uncertain set |
+| `rescan-hot.txt` | Short-interval refresh queue |
+| `rescan-warm.txt` | Medium-interval refresh queue |
+| `rescan-cold.txt` | Long-interval refresh queue |
 
-Domains already in `blocked.txt` or `direct.txt` are skipped on subsequent runs unless `--refresh-known` is passed.
+These state files stay flat because they are machine-maintained cache/state, not user-facing result bundles.
+
+User-facing review outputs are separate and live under `results_dir/txt/`:
+
+| File | Contents |
+|---|---|
+| `txt/proxy.txt` | Current run's local proxy-required domains |
+| `txt/direct.txt` | Current run's local direct-ok domains |
+| `txt/review.txt` | Current run's local review set |

@@ -12,9 +12,173 @@ use super::types::{
 };
 use crate::service_profiles;
 
+fn dns_failure_kind(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    detail
+        .strip_prefix("kind=")
+        .and_then(|rest| rest.split_whitespace().next())
+}
+
+fn resolver_health_note(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    [
+        "resolver_control_ok",
+        "resolver_control_empty",
+        "resolver_control_timeout",
+        "resolver_control_servfail",
+        "resolver_control_nxdomain",
+        "resolver_control_nodata",
+        "resolver_control_refused",
+        "resolver_control_failed",
+        "resolver_control_unknown",
+    ]
+    .into_iter()
+    .find(|marker| detail.contains(marker))
+}
+
+const MIN_CONFIDENT_CONTROL_DIRECT: u8 = 80;
+const MIN_CONFIDENT_CONTROL_BLOCKED: u8 = 80;
+const MIN_CONFIDENT_LOCAL_BLOCK_SIGNAL: u8 = 75;
+
+fn is_transport_noise_result(result: &ScanResult) -> bool {
+    result
+        .evidence
+        .signal
+        .as_deref()
+        .is_some_and(|signal| signal.contains("worker error"))
+        || result
+            .evidence
+            .source
+            .as_deref()
+            .is_some_and(|source| matches!(source, "scanner" | "transport"))
+        || matches!(
+            result.verdict,
+            Verdict::Unreachable | Verdict::TlsFailure | Verdict::UnexpectedStatus
+        )
+        || (result.network_evidence.dns.status != ProbeStatus::Ok
+            && result.network_evidence.path_dns.status != ProbeStatus::Ok)
+}
+
+fn classify_needs_review_reason(local: &ScanResult, control: &ScanResult) -> String {
+    let local_transport_noise = is_transport_noise_result(local);
+    let control_transport_noise = is_transport_noise_result(control);
+    let control_is_weak = control_note(control).is_some();
+
+    if local_transport_noise && control_transport_noise {
+        return "transport ambiguity: both local and control paths are too noisy to classify confidently"
+            .to_string();
+    }
+
+    if local_transport_noise {
+        return "transport ambiguity: local path is dominated by transient or technical failure"
+            .to_string();
+    }
+
+    if control_transport_noise || control_is_weak {
+        return "control-path ambiguity: control side is too weak to separate local blocking from broader failure"
+            .to_string();
+    }
+
+    format!(
+        "local route={} control route={}",
+        routing_decision_label(local.routing_decision),
+        routing_decision_label(control.routing_decision)
+    )
+}
+
+fn local_supports_proxy_promotion(local: &ScanResult) -> bool {
+    if is_transport_noise_result(local) {
+        return false;
+    }
+
+    match local.verdict {
+        Verdict::GeoBlocked
+        | Verdict::WafBlocked
+        | Verdict::Captcha
+        | Verdict::RateLimited
+        | Verdict::ApiBlocked => true,
+        Verdict::NetworkBlocked | Verdict::TlsFailure | Verdict::Unreachable => {
+            local.confidence >= MIN_CONFIDENT_LOCAL_BLOCK_SIGNAL
+                && (local.network_evidence.path_dns.status == ProbeStatus::Ok
+                    || local.network_evidence.dns.status == ProbeStatus::Ok)
+                && (local.network_evidence.tcp_443.status != ProbeStatus::Ok
+                    || local.network_evidence.tls_443.status != ProbeStatus::Ok)
+        }
+        Verdict::UnexpectedStatus => {
+            local.confidence >= MIN_CONFIDENT_LOCAL_BLOCK_SIGNAL
+                && local.http_status.is_some_and(|status| status >= 400)
+        }
+        Verdict::Accessible => false,
+    }
+}
+
+fn local_supports_consistent_blocked(local: &ScanResult) -> bool {
+    local.routing_decision != RoutingDecision::DirectOk
+        && local_supports_proxy_promotion(local)
+        && local.confidence >= MIN_CONFIDENT_CONTROL_BLOCKED
+}
+
+fn control_supports_direct_promotion(control: &ScanResult) -> bool {
+    control.routing_decision == RoutingDecision::DirectOk
+        && control.verdict == Verdict::Accessible
+        && control.confidence >= MIN_CONFIDENT_CONTROL_DIRECT
+}
+
+fn control_non_direct_is_weak(control: &ScanResult) -> bool {
+    if control.routing_decision == RoutingDecision::DirectOk {
+        return false;
+    }
+
+    if control.confidence < MIN_CONFIDENT_CONTROL_BLOCKED {
+        return true;
+    }
+
+    if matches!(
+        control.verdict,
+        Verdict::WafBlocked | Verdict::Captcha | Verdict::RateLimited | Verdict::UnexpectedStatus
+    ) {
+        return true;
+    }
+
+    matches!(
+        control.verdict,
+        Verdict::GeoBlocked | Verdict::NetworkBlocked | Verdict::TlsFailure | Verdict::Unreachable
+    ) && control.network_evidence.path_dns.status != ProbeStatus::Ok
+        && control.network_evidence.tcp_443.status != ProbeStatus::Ok
+        && control.network_evidence.tls_443.status != ProbeStatus::Ok
+}
+
+fn control_note(control: &ScanResult) -> Option<String> {
+    if control.routing_decision == RoutingDecision::DirectOk
+        && !control_supports_direct_promotion(control)
+    {
+        return Some(format!(
+            "control direct signal is weak: verdict={} confidence={}",
+            verdict_label(control.verdict),
+            control.confidence
+        ));
+    }
+
+    if control_non_direct_is_weak(control) {
+        return Some(format!(
+            "control path is too weak for a blocked-side comparison: verdict={} confidence={}",
+            verdict_label(control.verdict),
+            control.confidence
+        ));
+    }
+
+    None
+}
+
+#[allow(clippy::too_many_lines)]
 pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> ComparisonResult {
+    let control_supports_direct = control_supports_direct_promotion(control);
+    let control_blocked_is_weak = control_non_direct_is_weak(control);
+    let local_supports_promotion = local_supports_proxy_promotion(local);
+
     let mut decision = if local.routing_decision == RoutingDecision::ProxyRequired
-        && control.routing_decision == RoutingDecision::DirectOk
+        && control_supports_direct
+        && local_supports_promotion
     {
         ComparisonDecision::ConfirmedProxyRequired
     } else if matches!(
@@ -24,23 +188,53 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
             | Verdict::TlsFailure
             | Verdict::Unreachable
             | Verdict::UnexpectedStatus
-    ) && control.routing_decision == RoutingDecision::DirectOk
+            | Verdict::WafBlocked
+            | Verdict::Captcha
+    ) && control_supports_direct
+        && local_supports_promotion
     {
+        // "Smart WAF/Captcha Promotion": If local is WAF/Captcha but control proxy is DirectOk,
+        // it means the site is selectively blocking the local IP/geo, not down globally.
         ComparisonDecision::CandidateProxyRequired
     } else if local.routing_decision == RoutingDecision::DirectOk
         && control.routing_decision == RoutingDecision::DirectOk
     {
         ComparisonDecision::ConsistentDirect
-    } else if local.routing_decision != RoutingDecision::DirectOk
+    } else if local_supports_consistent_blocked(local)
         && control.routing_decision != RoutingDecision::DirectOk
+        && !control_blocked_is_weak
     {
         ComparisonDecision::ConsistentBlocked
     } else {
         ComparisonDecision::NeedsReview
     };
 
-    let network_notes =
+    let mut network_notes =
         compare_network_evidence(&local.network_evidence, &control.network_evidence);
+    if let Some(note) = control_note(control) {
+        network_notes.push(note);
+    }
+    if control_supports_direct
+        && !local_supports_promotion
+        && local.routing_decision != RoutingDecision::DirectOk
+    {
+        network_notes.push(format!(
+            "local signal is too weak for direct-vs-proxy promotion: verdict={} confidence={}",
+            verdict_label(local.verdict),
+            local.confidence
+        ));
+    }
+    if control.routing_decision != RoutingDecision::DirectOk
+        && !control_blocked_is_weak
+        && !local_supports_consistent_blocked(local)
+        && local.routing_decision != RoutingDecision::DirectOk
+    {
+        network_notes.push(format!(
+            "local side is too weak to confirm a shared blocked outcome: verdict={} confidence={}",
+            verdict_label(local.verdict),
+            local.confidence
+        ));
+    }
 
     let mut local_verdict_confidence = local.confidence;
     let mut local_routing_decision = local.routing_decision;
@@ -74,11 +268,7 @@ pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> C
             verdict_label(local.verdict),
             verdict_label(control.verdict)
         ),
-        ComparisonDecision::NeedsReview => format!(
-            "local route={} control route={}",
-            routing_decision_label(local.routing_decision),
-            routing_decision_label(control.routing_decision)
-        ),
+        ComparisonDecision::NeedsReview => classify_needs_review_reason(local, control),
     };
     let reason = if network_notes.is_empty() {
         reason
@@ -109,7 +299,32 @@ fn compare_network_evidence(local: &NetworkEvidence, control: &NetworkEvidence) 
     let mut notes = Vec::new();
 
     if local.dns.status != ProbeStatus::Ok && control.path_dns.status == ProbeStatus::Ok {
-        notes.push("local system DNS failed while control path DNS resolved".to_string());
+        let dns_kind = dns_failure_kind(local.dns.detail.as_deref()).unwrap_or("failed");
+        let resolver_health = resolver_health_note(local.dns.detail.as_deref());
+        match (dns_kind, resolver_health) {
+            ("nxdomain" | "servfail" | "timeout" | "refused", Some("resolver_control_ok")) => {
+                notes.push(format!(
+                    "local DNS manipulation suspected: system resolver returned {dns_kind} while control path DNS resolved"
+                ));
+            }
+            (
+                _,
+                Some(
+                    "resolver_control_timeout"
+                    | "resolver_control_servfail"
+                    | "resolver_control_failed",
+                ),
+            ) => {
+                notes.push(format!(
+                    "local resolver appears unhealthy: target query failed with {dns_kind} and innocuous control query also failed"
+                ));
+            }
+            _ => {
+                notes.push(format!(
+                    "local system DNS failed ({dns_kind}) while control path DNS resolved"
+                ));
+            }
+        }
     }
     if local.tcp_443.status != ProbeStatus::Ok && control.path_dns.status == ProbeStatus::Ok {
         notes.push("local tcp/443 failed while control path DNS still resolved".to_string());
@@ -129,9 +344,17 @@ fn compare_network_evidence(local: &NetworkEvidence, control: &NetworkEvidence) 
             let local_preview = local.path_dns.detail.as_deref().unwrap_or_default();
             let control_preview = control.path_dns.detail.as_deref().unwrap_or_default();
             if overlap.is_empty() {
-                notes.push(format!(
-                    "path DNS has no IP overlap: local={local_preview} control={control_preview}"
-                ));
+                if local.tcp_443.status != ProbeStatus::Ok
+                    || local.tls_443.status != ProbeStatus::Ok
+                {
+                    notes.push(format!(
+                        "DNS mismatch confirmed by failed direct tcp/tls: local={local_preview} control={control_preview}"
+                    ));
+                } else {
+                    notes.push(format!(
+                        "unconfirmed DNS mismatch: local={local_preview} control={control_preview}"
+                    ));
+                }
             } else if local_path_dns != control_path_dns {
                 notes.push(format!(
                     "path DNS partially overlaps: local={local_preview} control={control_preview}"
@@ -173,15 +396,42 @@ pub fn compare_with_control(
     comparisons
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn write_control_comparison_report(
     comparisons: &[ComparisonResult],
     output_path: &Path,
 ) -> anyhow::Result<()> {
     let mut counts = BTreeMap::<&str, usize>::new();
+    let mut dns_note_counts = BTreeMap::<&str, usize>::new();
+    let mut needs_review_counts = BTreeMap::<&str, usize>::new();
     for comparison in comparisons {
         *counts
             .entry(comparison_decision_label(comparison.decision))
             .or_default() += 1;
+        if comparison.decision == ComparisonDecision::NeedsReview {
+            let bucket = if comparison.reason.starts_with("control-path ambiguity:") {
+                "control_path_ambiguity"
+            } else if comparison.reason.starts_with("transport ambiguity:") {
+                "transport_ambiguity"
+            } else {
+                "mixed_or_other"
+            };
+            *needs_review_counts.entry(bucket).or_default() += 1;
+        }
+        for note in &comparison.network_notes {
+            let bucket = if note.contains("local DNS manipulation suspected") {
+                "dns_manipulation_suspected"
+            } else if note.contains("local resolver appears unhealthy") {
+                "resolver_unhealthy"
+            } else if note.contains("DNS mismatch confirmed by failed direct tcp/tls") {
+                "dns_mismatch_confirmed"
+            } else if note.contains("unconfirmed DNS mismatch") {
+                "dns_mismatch_unconfirmed"
+            } else {
+                continue;
+            };
+            *dns_note_counts.entry(bucket).or_default() += 1;
+        }
     }
 
     let mut report = String::new();
@@ -191,6 +441,20 @@ pub fn write_control_comparison_report(
     writeln!(&mut report, "Summary")?;
     for (decision, count) in counts {
         writeln!(&mut report, "- {decision}: {count}")?;
+    }
+    if !needs_review_counts.is_empty() {
+        writeln!(&mut report)?;
+        writeln!(&mut report, "Needs review breakdown")?;
+        for (label, count) in needs_review_counts {
+            writeln!(&mut report, "- {label}: {count}")?;
+        }
+    }
+    if !dns_note_counts.is_empty() {
+        writeln!(&mut report)?;
+        writeln!(&mut report, "DNS signals")?;
+        for (label, count) in dns_note_counts {
+            writeln!(&mut report, "- {label}: {count}")?;
+        }
     }
 
     let sections = [
@@ -319,8 +583,14 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
         for item in &items {
             if let Some(role) = item.service_role.as_deref() {
                 observed_roles.insert(role.to_string());
+                for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                    observed_roles.insert(satisfied);
+                }
                 if item.local_verdict == Verdict::GeoBlocked {
                     local_geo_roles.insert(role.to_string());
+                    for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                        local_geo_roles.insert(satisfied);
+                    }
                 }
             }
             match item.decision {
@@ -328,12 +598,18 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
                     confirmed_hosts.push(item.domain.clone());
                     if let Some(role) = item.service_role.as_deref() {
                         confirmed_roles.insert(role.to_string());
+                        for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                            confirmed_roles.insert(satisfied);
+                        }
                     }
                 }
                 ComparisonDecision::CandidateProxyRequired => {
                     candidate_hosts.push(item.domain.clone());
                     if let Some(role) = item.service_role.as_deref() {
                         candidate_roles.insert(role.to_string());
+                        for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                            candidate_roles.insert(satisfied);
+                        }
                     }
                 }
                 ComparisonDecision::ConsistentDirect => {
@@ -343,12 +619,23 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
                     {
                         direct_critical_roles.insert(role.to_string());
                     }
+                    for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                        if service_profiles::is_service_role_critical(
+                            Some(&service),
+                            Some(satisfied.as_str()),
+                        ) {
+                            direct_critical_roles.insert(satisfied);
+                        }
+                    }
                 }
                 ComparisonDecision::NeedsReview => {
                     if item.control_routing_decision == RoutingDecision::DirectOk {
                         review_assisted_hosts.push(item.domain.clone());
                         if let Some(role) = item.service_role.as_deref() {
                             review_assisted_roles.insert(role.to_string());
+                            for satisfied in service_profiles::satisfied_roles(&item.domain) {
+                                review_assisted_roles.insert(satisfied);
+                            }
                         }
                     }
                 }
@@ -571,15 +858,25 @@ pub fn summarize_service_geo(comparisons: &[ComparisonResult]) -> Vec<ServiceGeo
     summaries
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn write_service_geo_report(
     summaries: &[ServiceGeoSummary],
     output_path: &Path,
 ) -> anyhow::Result<()> {
     let mut counts = BTreeMap::<&str, usize>::new();
+    let mut publishable_services = Vec::new();
+    let mut review_services = Vec::new();
+    let mut direct_services = Vec::new();
     for summary in summaries {
         *counts
             .entry(service_geo_decision_label(summary.decision))
             .or_default() += 1;
+        match service_publication_tier(summary) {
+            "strict_publishable" => publishable_services.push(summary.service.clone()),
+            "review_only" => review_services.push(summary.service.clone()),
+            "direct_only" => direct_services.push(summary.service.clone()),
+            _ => {}
+        }
     }
 
     let mut report = String::new();
@@ -590,6 +887,23 @@ pub fn write_service_geo_report(
     for (decision, count) in counts {
         writeln!(&mut report, "- {decision}: {count}")?;
     }
+    writeln!(&mut report)?;
+    writeln!(&mut report, "Publication guidance")?;
+    writeln!(
+        &mut report,
+        "- strict_publishable_services: {}",
+        format_report_list(&publishable_services)
+    )?;
+    writeln!(
+        &mut report,
+        "- review_only_services: {}",
+        format_report_list(&review_services)
+    )?;
+    writeln!(
+        &mut report,
+        "- direct_only_services: {}",
+        format_report_list(&direct_services)
+    )?;
 
     let sections = [
         (
@@ -649,9 +963,10 @@ pub fn write_service_geo_report(
 
             writeln!(
                 &mut report,
-                "- {} [{}%] roles={} missing_critical={} confirmed={} candidates={} review_assisted={} direct={} {}",
+                "- {} [{}%] publish_tier={} roles={} missing_critical={} confirmed={} candidates={} review_assisted={} direct={} {}",
                 item.service,
                 item.confidence,
+                service_publication_tier(item),
                 observed_roles,
                 missing_critical,
                 confirmed,
@@ -667,11 +982,31 @@ pub fn write_service_geo_report(
     Ok(())
 }
 
+fn service_publication_tier(summary: &ServiceGeoSummary) -> &'static str {
+    if summary.decision == ServiceGeoDecision::ConfirmedGeoBlocked
+        && summary.missing_critical_roles.is_empty()
+    {
+        "strict_publishable"
+    } else if summary.decision == ServiceGeoDecision::DirectOk {
+        "direct_only"
+    } else {
+        "review_only"
+    }
+}
+
 fn format_roles(roles: &[String]) -> String {
     if roles.is_empty() {
         "-".to_string()
     } else {
         roles.join(", ")
+    }
+}
+
+fn format_report_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
     }
 }
 

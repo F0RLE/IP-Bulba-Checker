@@ -2,102 +2,175 @@
 
 ---
 
-## v0.1.2 — Signal Quality
+## v0.1.3 — Active Development
 
-(All planned features for this release have been implemented or moved to future releases)
+> Primary goal: improve selective-proxy accuracy for country-level blocking detection.
+>
+> Bulbascan is not trying to become a full browser-bypass platform. The priority is reliable classification:
+> `DirectOk` vs `ProxyRequired` vs `ManualReview`, with fewer false positives from WAFs, captchas, DNS poisoning, and transport-level censorship.
 
----
+## Core Accuracy
 
-## v0.1.3 — Transport Layer
+- **DNS-level block detection**
+  - Usefulness: 9/10
+  - Status: completed
+  - What it gives: stronger first-class DNS evidence for poisoned answers, resolver failures, and mismatch confirmation.
+  - Implemented:
+    - system DNS vs DoH comparison
+    - resolver failure and health classification
+    - DNS mismatch confirmation through failed direct TCP/TLS probes
 
-### DNS-level block detection (~150 lines)
-Before HTTP probing, compare ISP DNS response (`resolve_host()` in `network.rs` — uses system DNS) with DoH response (`resolve_host_via_path_dns()` — already uses Cloudflare/Google DoH). Detect NXDOMAIN injection, blockpage IP substitution, and DNS poisoning. `NetworkEvidence.dns` and `NetworkEvidence.path_dns` are already populated — just need IP comparison logic in `compare_network_evidence()` to emit a verdict, not just a note.
+- **Dual-vantage confidence improvements**
+  - Usefulness: 8/10
+  - Status: completed
+  - What it gives: cleaner `ConfirmedProxyRequired` vs `CandidateProxyRequired` outcomes and less noise in publication decisions.
+  - Implemented:
+    - `NeedsReview` distinguishes control-path ambiguity from transport ambiguity
+    - promotion rules now require stronger local evidence before direct-vs-proxy escalation
+    - weak local transport noise no longer promotes into `CandidateProxyRequired`
+    - weak local non-direct results no longer force `ConsistentBlocked` against a strong blocked control path
+    - comparison notes now explain when the local or control side is too weak for confident publication decisions
 
-### SNI-based block detection (~120 lines)
-`probe_tls_443()` in `network.rs` already sends a TLS ClientHello with the target SNI. Extend: if TCP 443 succeeds but TLS handshake resets (already captured in `tls_443.status`) → emit `TlsFailure` with SNI-block reason. Also probe the same IP with a benign SNI (e.g. `cloudflare.com`) — if that succeeds → confirmed SNI block. Uses existing `tokio-rustls` setup.
+- **Browser verification as a confirmation layer**
+  - Usefulness: 7/10
+  - Status: completed
+  - What it gives: a secondary confirmation layer for challenge-heavy and script-dependent targets without turning the browser path into the main detector.
+  - Implemented:
+    - cleaner challenge-page labeling for captcha and WAF interstitials
+    - browser budget for bulk runs
+    - challenge-family reuse to avoid repeated browser confirmation
+    - more precise handling for headers such as `cf-mitigated: challenge` and `x-amzn-waf-action=captcha|challenge`
 
-### DNS IP comparison in `compare_network_evidence` (~40 lines)
-`compare_network_evidence()` in `comparison.rs` generates text notes when local DNS fails and control path DNS succeeds (lines 92–100), but **never compares the actual IP sets**. If local DNS returns a blockpage IP while control returns the real IP, the difference is invisible. Add `parse_ip_from_detail()` on `ProbeEvidence.detail` and compare local vs control resolved IPs — if they differ, emit a `dns_ip_mismatch` note that boosts `CandidateProxyRequired` confidence.
+- **Service-profile coverage**
+  - Usefulness: 8/10
+  - Status: completed
+  - What it gives: stronger service-level decisions by covering critical login, API, browser, and console surfaces.
+  - Implemented:
+    - multi-role hosts in `profiles.toml`
+    - current official aliases such as `platform.claude.com`
+    - richer login and browser probe paths
+    - wider API- and auth-adjacent host coverage such as `developers.tiktok.com` and `connect.deezer.com`
 
-### TCP-80 probe result unused (~10 lines)
-`collect_network_evidence()` in `network.rs` probes `tcp/80` and stores it in `NetworkEvidence.tcp_80`, but `compare_network_evidence()` in `comparison.rs` never reads it. Either use it (local tcp/80 up but local tcp/443 down → likely port-level block) or remove the probe to avoid dead runtime cost.
+## Performance & Scale
 
-### IPv6 dual-stack probing (~60 lines)
-Extend `collect_network_evidence()` in `network.rs` to probe AAAA records alongside A records. Report when IPv4 is blocked but IPv6 works. `reqwest` and `tokio` support IPv6 natively. Add `ipv6` field to `NetworkEvidence`.
+- **Concurrent Domain Ingestion**
+  - Usefulness: 6/10
+  - Status: completed
+  - What it gives: lower startup latency on large or multi-file domain lists.
+  - Implemented:
+    - concurrent loading for plain-text input files
+    - deterministic merge in source order
+    - streaming line-by-line ingestion for proxy lists
 
----
+- **Moving Average Speed Smoothing**
+  - Usefulness: 5/10
+  - Status: completed
+  - What it gives: more stable progress speed and ETA during large scans.
+  - Implemented:
+    - 3-second moving-window throughput smoothing
 
-## v0.1.4 — Output & Export Formats
+## Network & Transport Research
 
-### GeoIP — output: `geoip.dat` generation (~150 lines)
-DNS-resolve blocked domains → collect A/AAAA records → aggregate into CIDR subnets → compile into V2Ray `GeoIP` protobuf binary. Same `prost` setup already used in `geosite.rs`, no new dependencies. Flag: `--emit-geoip geoip.dat`.
+- **ECH (Encrypted Client Hello) Support**
+  - Usefulness: 4/10
+  - Status: in progress
+  - What it gives: an additional research signal for targets and CDNs that actually publish usable ECH configuration.
+  - Remaining:
+    - add optional ECH probing
+    - keep it detection-oriented rather than treating it as a universal bypass path
 
-### GeoIP — input: `geoip.dat` import (~100 lines)
-Mirror of `--import-geosite`: add `--import-geoip geoip.dat --import-geoip-category RU`. Decode CIDR blocks from the binary V2Ray `GeoIP` protobuf (same `prost` schema), then either reverse-rDNS each range or pass subnets directly as scan targets. Useful when the starting point is an IP blocklist rather than domain names.
+- **XHTTP & HTTP/3 Probing**
+  - Usefulness: 4/10
+  - Status: in progress
+  - What it gives: optional secondary transport evidence for domains that stay ambiguous over the default path.
+  - Remaining:
+    - evaluate Xray XHTTP as a secondary transport
+    - evaluate HTTP/3/QUIC probing
+    - keep this only if it materially improves classification quality
 
-### GeoIP — blockpage IP fingerprinting (~50 lines)
-In `collect_network_evidence()`: if local DNS resolves to a known blockpage IP (built-in list or user file via `--blockpage-ips blockpage_ips.txt`), immediately emit a `dns_blockpage_ip` verdict with a confidence boost instead of a plain text note. Known examples: `95.213.255.1` (Rostelecom), `188.186.154.90` (MTS), `188.114.97.0/24` (Cloudflare WARP block range). Pairs with the DNS IP comparison item in v0.1.3.
+## Output & Export Formats
 
-### Clash / Mihomo rule-set export (~50 lines)
-Add a `write_clash_rule_set()` to `router_exports.rs` using the existing `RouterExportSpec` pattern:
-```yaml
-payload:
-  - DOMAIN,blocked.com
-  - DOMAIN-SUFFIX,blocked.com
-```
-`RouterExportSpec` is already factored as a generic over domain lists — adding a new format is mechanical.
+- **Direct `.srs` (sing-box Rule Set v4) Compilation**
+  - Usefulness: 7/10
+  - Status: completed
+  - What it gives: lower-memory sing-box deployments through direct binary rule-set output.
+  - Implemented:
+    - `.srs` generation through local `sing-box` CLI when available
+    - matching binary route snippets
+    - JSON source rule sets kept as the portable baseline
 
-### Shadowrocket / NekoBox config export (~40 lines)
-```ini
-[Rule]
-DOMAIN,blocked.com,PROXY
-DOMAIN-SUFFIX,blocked.com,PROXY
-```
-Same pattern as Clash export.
+- **Mihomo Rule-Set (`.mrs`) Export**
+  - Usefulness: 6/10
+  - Status: completed
+  - What it gives: native output for Mihomo / Clash.Meta consumers.
+  - Implemented:
+    - Mihomo text rule sets and provider snippets by default
+    - optional `.mrs` generation through local `mihomo` / `clash-meta` CLI
+    - binary provider snippets when the compiler is available
 
-### Import helpers (~80 lines)
-Parse existing block lists: Clash `.yaml`, Shadowrocket, NekoBox/Mihomo → extract domain list for scanning. Currently only `geosite.dat` binary and plain `.txt` are supported as input. `normalize_domain()` in `cli.rs` already handles most prefix formats.
+## Tooling & Operator UX
 
-### JSON result export (~50 lines)
-`--format json` is parsed in `Args` but the JSON branch is likely a stub. `ScanResult` already derives `Serialize` — just needs a writer that emits `Vec<ScanResult>` as JSON to a file instead of only text reports.
+- **Global Configuration (`bulbascan.toml`)**
+  - Usefulness: 7/10
+  - Status: completed
+  - What it gives: persistent operator defaults without weakening CLI overrides.
+  - Implemented:
+    - optional `bulbascan.toml` auto-loading from the working directory
+    - explicit `--config` override and `--no-config` escape hatch
+    - precedence: `CLI/env > config file > built-in defaults`
+    - persisted defaults for proxies, timeouts, output profile, browser path, results directory, and comparison settings
 
----
+- **Enhanced Scan Reports**
+  - Usefulness: 8/10
+  - Status: completed
+  - What it gives: clearer operator-facing outputs for publication and review decisions.
+  - Implemented:
+    - confidence summaries
+    - `ManualReview` hotspot reporting by root cause with operator guidance
+    - publication guidance in `txt/validation.txt`
+    - service publication tiers in `txt/service-geo.txt`
 
-## v0.1.5 — State & Workflow
+- **Incremental Publishing Workflow**
+  - Usefulness: 8/10
+  - Status: completed
+  - What it gives: staged publish artifacts and refresh queues instead of treating every scan as a full reset.
+  - Implemented:
+    - publication tiers (`publish-strict`, `publish-review`, `publish-direct`)
+    - operator-facing `txt/publication.txt`
+    - hot / warm / cold rescan queue files
+    - queue persistence into `--state-dir` for later cycles
 
-### State expiry / TTL (~40 lines)
-`LocalState` in `state.rs` stores blocked/direct forever. Add a timestamp per domain (store as `domain\ttimestamp` in the text file). On load, expire entries older than N days (configurable via `--state-ttl-days`). Prevents stale direct-ok entries from masking newly-blocked domains after ISP policy changes.
+- **Cross-platform runtime hardening**
+  - Usefulness: 6/10
+  - Status: completed
+  - What it gives: more predictable behavior across Windows, macOS, and Linux.
+  - Implemented:
+    - browser auto-detection through env overrides, `PATH`, and common install locations
+    - plain-text progress fallback when ANSI / VT support is unavailable
+    - more consistent browser-assisted confirmation across supported desktop platforms
 
-### Multi-file state merge (~30 lines)
-Currently `--state-dir` is a single directory. Add `--merge-state-dir` to ingest another state directory and union the sets before scanning. Useful when combining results from multiple machines or network vantage points.
+- **Output layout simplification**
+  - Usefulness: 7/10
+  - Status: completed
+  - What it gives: a cleaner `results_dir` with grouped outputs and shorter file names.
+  - Implemented:
+    - outputs are grouped into `txt/`, `json/`, `yaml/`, and `bin/`
+    - human-facing reports and lists use shorter names such as `comparison.txt`, `service-geo.txt`, and `publication.txt`
+    - router and client exports keep the same logical coverage but no longer flood the top level of the results directory
 
-### Auto-rescan of `manual_review` bucket (~20 lines)
-`manual_review.txt` entries are always rescanned, but there is no mechanism to promote them after N failed rescans. Add a counter per domain — after 3 consecutive `ManualReview` results with no resolution, downgrade to `direct.txt` with a note, or flag as permanently inconclusive.
+## Experimental
 
-### State: no `manual_review` counter / promotion logic (~30 lines)
-`LocalState` in `state.rs` stores `manual_review` as a plain `BTreeSet<String>` with no per-domain counter. The roadmap item "auto-rescan" already tracks this — but the data model must change first: replace plain string with `(domain, attempt_count)` tuple stored as `domain\t<n>` in the file. `read_domain_file()` / `write_domain_file()` need updating before the promotion logic can be wired in.
+- **AI Labyrinth / visibility-safe interaction**
+  - Usefulness: 3/10
+  - Status: in progress
+  - What it gives: safer browser automation if the confirmation layer becomes more interactive.
+  - Remaining:
+    - avoid hidden honeypot links and decoy elements
+    - keep the scope limited to browser confirmation flows
 
-### Periodic state flush (~30 lines)
-With `--state-dir`, state is committed to disk only once at the very end of `main()`. If the user kills the process mid-scan or the proxy crashes, progress is lost. Add a periodic flush: every N domains processed (e.g. 1000), call `local_state.save(dir)`. The `save()` method already exists and is async.
-
----
-
-## v0.1.6 — Developer & Quality
-
-### `--dry-run` mode (~20 lines)
-Parse all inputs, validate proxy, check signatures, print a summary of what would be scanned — without making any network requests. Useful for CI validation of config files.
-
-### Structured JSON logging with `--log-json` (~30 lines)
-Emit each scan result as a newline-delimited JSON (`ndjson`) stream to stderr while the scan runs. Enables piping into `jq`, log aggregators, or future UI tools.
-
-### Benchmark / regression test suite
-A curated set of domains with known expected outcomes (annotated as `geo domain.com`, `direct domain.com`, etc.) that runs via `cargo test` using mocked HTTP responses. `validation.rs` already has the `ExpectedOutcome` and bucket machinery — just needs a fixture-based test harness.
-
-### Windows starter pack
-Release archive: `bulbascan.exe` + `profiles.toml` + `example-domains.txt` + `QUICKSTART.txt` (3 lines). Reduces friction for non-technical users from target audience.
-
-### User-loadable signatures file (~80 lines)
-`signatures.rs` currently compiles all block signatures (body, header, API patterns) into the binary as Rust `const` arrays. Add support for loading an optional `signatures.toml` alongside the executable that extends or overrides the built-in set. The `BlockMatcher::new(file)` path already accepts an `Option<&Path>` — it just needs a TOML parser for the same schema.
-
-### Cancellable retry sleep (~10 lines)
-In `scan_domain()`, the `tokio::time::sleep()` between retest attempts (line ~768) is not cancellation-aware. If the user presses `q` during the backoff sleep, the worker does not react until the sleep expires. Wrap with `tokio::select! { () = sleep => {}, () = ct.cancelled() => break }`.
+- **Daemon / REST API Mode**
+  - Usefulness: 4/10
+  - Status: in progress
+  - What it gives: service-style integration for other tools once the detection pipeline is stable enough.
+  - Remaining:
+    - only revisit this after classification accuracy work is largely closed
