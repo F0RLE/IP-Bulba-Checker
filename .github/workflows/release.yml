@@ -94,26 +94,32 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            target_dir: target
             artifact_name: bulbascan
             asset_name: bulbascan-linux-amd64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            target_dir: target
             artifact_name: bulbascan.exe
             asset_name: bulbascan-windows-amd64.exe
           - os: macos-latest
             target: x86_64-apple-darwin
+            target_dir: target
             artifact_name: bulbascan
             asset_name: bulbascan-macos-amd64
           - os: macos-latest
             target: aarch64-apple-darwin
+            target_dir: target
             artifact_name: bulbascan
             asset_name: bulbascan-macos-arm64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
+            target_dir: target-cross
             artifact_name: bulbascan
             asset_name: bulbascan-linux-arm64
           - os: windows-latest
             target: i686-pc-windows-msvc
+            target_dir: target
             artifact_name: bulbascan.exe
             asset_name: bulbascan-windows-x86.exe
 
@@ -130,6 +136,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          shared-key: release-${{ matrix.target }}
 
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
@@ -213,19 +220,20 @@ jobs:
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             export LIBCLANG_PATH=/usr/lib/llvm-10/lib
             export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu
-            cross build --release --locked --target "${{ matrix.target }}"
+            rm -rf "${{ matrix.target_dir }}"
+            cross build --release --locked --target "${{ matrix.target }}" --target-dir "${{ matrix.target_dir }}"
           else
-            cargo build --release --locked --target "${{ matrix.target }}"
+            cargo build --release --locked --target "${{ matrix.target }}" --target-dir "${{ matrix.target_dir }}"
           fi
 
       - name: Prepare Artifact (Unix)
         if: runner.os != 'Windows'
-        run: mv target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_name }}
+        run: mv ${{ matrix.target_dir }}/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_name }}
 
       - name: Prepare Artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Move-Item -Path "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" -Destination "${{ matrix.asset_name }}"
+        run: Move-Item -Path "${{ matrix.target_dir }}\${{ matrix.target }}\release\${{ matrix.artifact_name }}" -Destination "${{ matrix.asset_name }}"
 
       - name: Upload to Release
         env:
