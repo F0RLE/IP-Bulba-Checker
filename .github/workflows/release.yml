@@ -131,19 +131,21 @@ jobs:
         with:
           cache-on-failure: true
 
-      - name: Install NASM
-        uses: ilammy/setup-nasm@v1
-
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib
+          sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib nasm
 
       - name: Install Dependencies (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $nasm = Get-Command nasm -ErrorAction SilentlyContinue
+          if (-not $nasm) {
+            choco install nasm -y
+          }
+
           $cmake = Get-Command cmake -ErrorAction SilentlyContinue
           if (-not $cmake) {
             foreach ($candidate in @(
@@ -183,7 +185,7 @@ jobs:
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm cmake
+          brew install llvm cmake nasm
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
       - name: Install Cross (Linux ARM64)
@@ -193,6 +195,9 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build Release
+        env:
+          LIBCLANG_PATH: /usr/lib/llvm-14/lib
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: --sysroot=/usr/aarch64-linux-gnu
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then

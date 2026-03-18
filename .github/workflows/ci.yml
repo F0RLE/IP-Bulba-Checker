@@ -38,19 +38,21 @@ jobs:
       with:
         cache-on-failure: true
       
-    - name: Install NASM
-      uses: ilammy/setup-nasm@v1
-      
     - name: Install LLVM & Dependencies (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib
+        sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib nasm
         
     - name: Install LLVM (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
+        $nasm = Get-Command nasm -ErrorAction SilentlyContinue
+        if (-not $nasm) {
+          choco install nasm -y
+        }
+
         $cmake = Get-Command cmake -ErrorAction SilentlyContinue
         if (-not $cmake) {
           foreach ($candidate in @(
@@ -90,7 +92,7 @@ jobs:
     - name: Install LLVM (macOS)
       if: runner.os == 'macOS'
       run: |
-        brew install llvm cmake
+        brew install llvm cmake nasm
         echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
     - name: Check compilation
