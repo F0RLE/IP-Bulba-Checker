@@ -276,23 +276,22 @@ async fn main() -> anyhow::Result<()> {
     let output_format = args.format.clone();
     let signatures_file = args.signatures.clone();
     let scan_policy = args.profile.as_scanner_policy();
-    let state_dir = args.state_dir.clone();
+    let explicit_state_dir = args.state_dir.clone();
+    let state_dir = explicit_state_dir
+        .clone()
+        .unwrap_or_else(|| args.results_dir.join("state"));
+    let state_dir_ref = state_dir.as_path();
+    let state_enabled = true;
 
-    let state_enabled = state_dir.is_some();
-
-    let mut local_state = if let Some(dir) = state_dir.as_ref() {
-        match state::LocalState::load(dir) {
-            Ok(existing) => existing,
-            Err(err) => {
-                anyhow::bail!(
-                    "State directory {} is corrupted or unreadable: {err}\n\
-                     Fix or remove the directory, or omit --state-dir.",
-                    dir.display()
-                );
-            }
+    let mut local_state = match state::LocalState::load(state_dir_ref) {
+        Ok(existing) => existing,
+        Err(err) => {
+            anyhow::bail!(
+                "State directory {} is corrupted or unreadable: {err}\n\
+                 Fix or remove the directory, or point --state-dir elsewhere.",
+                state_dir.display()
+            );
         }
-    } else {
-        state::LocalState::default()
     };
 
     // Read or fetch domains
@@ -553,7 +552,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&out_ok_cleanup_path);
     }
 
-    let mut blocked_domains_for_outputs = if state_dir.is_some() {
+    let mut blocked_domains_for_outputs = if state_enabled {
         local_state.blocked_domains()
     } else {
         blocked_domains_from_results(&scan_results)
@@ -752,13 +751,13 @@ async fn main() -> anyhow::Result<()> {
             let comparisons = scanner::compare_with_control(&scan_results, &control_results);
             let confirmed_proxy_required = blocked_domains_from_comparisons(&comparisons);
             if !confirmed_proxy_required.is_empty() {
-                if state_dir.is_some() {
+                if state_enabled {
                     local_state.ingest_confirmed_blocked(&confirmed_proxy_required);
                     blocked_domains_for_outputs = local_state.blocked_domains();
                 }
                 geosite_domains = confirmed_proxy_required.clone();
                 geosite_use_scan_results = false;
-                let blocked_domains_ref = if state_dir.is_some() {
+                let blocked_domains_ref = if state_enabled {
                     &blocked_domains_for_outputs
                 } else {
                     &confirmed_proxy_required
@@ -936,16 +935,13 @@ async fn main() -> anyhow::Result<()> {
             &scan_results,
             comparison_results.as_deref(),
             &args.results_dir,
-            state_dir.as_deref(),
+            Some(state_dir_ref),
         ) {
-            Ok(()) => println!(
-                "Publication artifacts saved to {} and rescan queues updated{}.",
-                publication_report_path.display(),
-                state_dir
-                    .as_ref()
-                    .map(|dir| format!(" in {}", dir.display()))
-                    .unwrap_or_default()
-            ),
+                    Ok(()) => println!(
+                        "Publication artifacts saved to {} and rescan queues updated in {}.",
+                        publication_report_path.display(),
+                        state_dir.display()
+                    ),
             Err(e) => eprintln!("Error writing publication artifacts: {e}"),
         }
     }
@@ -958,7 +954,7 @@ async fn main() -> anyhow::Result<()> {
         ));
 
         let geosite_result = if geosite_use_scan_results {
-            if state_dir.is_some() {
+            if state_enabled {
                 geosite::compile_domains(
                     &blocked_domains_for_outputs,
                     &geosite_path,
@@ -969,7 +965,7 @@ async fn main() -> anyhow::Result<()> {
             }
         } else {
             geosite::compile_domains(
-                if state_dir.is_some() {
+                if state_enabled {
                     &blocked_domains_for_outputs
                 } else {
                     &geosite_domains
@@ -992,10 +988,10 @@ async fn main() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&geosite_path);
     }
 
-    if state_enabled && let Some(dir) = state_dir.as_ref() {
-        match local_state.save(dir).await {
-            Ok(()) => println!("Local state saved to {}.", dir.display()),
-            Err(err) => eprintln!("Error saving state to {}: {err}", dir.display()),
+    if state_enabled {
+        match local_state.save(state_dir_ref).await {
+            Ok(()) => println!("Local state saved to {}.", state_dir.display()),
+            Err(err) => eprintln!("Error saving state to {}: {err}", state_dir.display()),
         }
     }
 

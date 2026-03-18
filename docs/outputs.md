@@ -205,7 +205,11 @@ Treat specialized `bundle*` and `apex*` exports as advanced compatibility output
 
 ## State Directory
 
-When `--state-dir` is used, Bulbascan maintains persistent state files:
+Bulbascan keeps persistent state in `results_dir/state` by default.
+
+If `--state-dir` is provided, that explicit location is used instead.
+
+The state directory maintains:
 
 | File | Contents |
 |---|---|

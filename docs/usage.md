@@ -420,7 +420,9 @@ With a control proxy:
 
 ## Incremental State
 
-Use `--state-dir` to build a persistent local base:
+Bulbascan keeps persistent state automatically inside `results_dir/state`.
+
+Use `--state-dir` only when you want to override that location:
 
 ```sh
 bulbascan domains.txt --state-dir state
