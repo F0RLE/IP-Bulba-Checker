@@ -191,6 +191,15 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      - name: Configure Linux ARM64 C toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          {
+            echo "CC_aarch64_unknown_linux_gnu=clang"
+            echo "CXX_aarch64_unknown_linux_gnu=clang++"
+          } >> "$GITHUB_ENV"
+
       - name: Build Release
         shell: bash
         run: |
