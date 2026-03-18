@@ -136,6 +136,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          shared-key: release-${{ matrix.target }}
 
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
@@ -219,6 +220,7 @@ jobs:
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             export LIBCLANG_PATH=/usr/lib/llvm-10/lib
             export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu
+            rm -rf "${{ matrix.target_dir }}"
             cross build --release --locked --target "${{ matrix.target }}" --target-dir "${{ matrix.target_dir }}"
           else
             cargo build --release --locked --target "${{ matrix.target }}" --target-dir "${{ matrix.target_dir }}"
