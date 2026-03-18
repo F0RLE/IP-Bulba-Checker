@@ -42,7 +42,8 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib nasm
+        sudo apt-get install -y cmake clang libclang-dev llvm-dev pkg-config gcc-multilib g++-multilib nasm
+        echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
         
     - name: Install LLVM (Windows)
       if: runner.os == 'Windows'
@@ -86,7 +87,19 @@ jobs:
         }
 
         $clangPath = if ($clang.Source) { $clang.Source } else { $clang.FullName }
-        $libclangDir = Split-Path $clangPath -Parent
+        $clangDir = Split-Path $clangPath -Parent
+        $libclang = Get-ChildItem -Path $clangDir -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $libclang) {
+          $libclang = Get-ChildItem -Path @(
+            "$env:ProgramFiles\\LLVM\\bin",
+            "$env:ProgramFiles(x86)\\LLVM\\bin"
+          ) -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        if (-not $libclang) {
+          throw "libclang.dll not found on the runner"
+        }
+
+        $libclangDir = Split-Path $libclang.FullName -Parent
         "LIBCLANG_PATH=$libclangDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         
     - name: Install LLVM (macOS)
