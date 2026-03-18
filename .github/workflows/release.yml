@@ -183,28 +183,17 @@ jobs:
           brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
-      - name: Install Zig Build Tool (Linux ARM64)
+      - name: Install Cross (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          python3 -m pip install --user ziglang
-          cargo install --locked cargo-zigbuild
+          cargo install --locked cross
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Configure Linux ARM64 C toolchain
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        shell: bash
-        run: |
-          {
-            echo "CC_aarch64_unknown_linux_gnu=clang"
-            echo "CXX_aarch64_unknown_linux_gnu=clang++"
-          } >> "$GITHUB_ENV"
 
       - name: Build Release
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            cargo zigbuild --release --locked --target "${{ matrix.target }}"
+            cross build --release --locked --target "${{ matrix.target }}"
           else
             cargo build --release --locked --target "${{ matrix.target }}"
           fi
