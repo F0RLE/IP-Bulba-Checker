@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
@@ -12,81 +15,31 @@ permissions:
   contents: write
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
-  prepare-release:
+  create-release:
     name: Prepare Release
     runs-on: ubuntu-latest
-    outputs:
-      release_tag: ${{ steps.prepare.outputs.release_tag }}
-      notes_path: ${{ steps.prepare.outputs.notes_path }}
-      has_notes: ${{ steps.prepare.outputs.has_notes }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          fetch-depth: 0
-
-      - name: Validate release source and create tag
-        id: prepare
-        shell: bash
-        run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "Release workflow must be started from main." >&2
-            exit 1
-          fi
-
-          TAG_INPUT="${{ inputs.tag }}"
-          if [[ "$TAG_INPUT" != v* ]]; then
-            RELEASE_TAG="v$TAG_INPUT"
-          else
-            RELEASE_TAG="$TAG_INPUT"
-          fi
-
-          NOTES_PATH="docs/releases/${RELEASE_TAG}.md"
-          if [ -f "$NOTES_PATH" ]; then
-            HAS_NOTES=true
-          else
-            HAS_NOTES=false
-          fi
-
-          git fetch origin main --tags
-          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Tag $RELEASE_TAG already exists, reusing it."
-          else
-            git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG" "$GITHUB_SHA"
-            git push origin "$RELEASE_TAG"
-          fi
-
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "notes_path=$NOTES_PATH" >> "$GITHUB_OUTPUT"
-          echo "has_notes=$HAS_NOTES" >> "$GITHUB_OUTPUT"
-
-      - name: Create or update GitHub release
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          make_latest: true
+          allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
-          NOTES_PATH: ${{ steps.prepare.outputs.notes_path }}
-          HAS_NOTES: ${{ steps.prepare.outputs.has_notes }}
-        shell: bash
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [ "$HAS_NOTES" = "true" ]; then
-              gh release edit "$RELEASE_TAG" --title "Release $RELEASE_TAG" --notes-file "$NOTES_PATH" --latest
-            else
-              gh release edit "$RELEASE_TAG" --title "Release $RELEASE_TAG" --notes "" --latest
-            fi
-          else
-            if [ "$HAS_NOTES" = "true" ]; then
-              gh release create "$RELEASE_TAG" --title "Release $RELEASE_TAG" --notes-file "$NOTES_PATH" --latest
-            else
-              gh release create "$RELEASE_TAG" --title "Release $RELEASE_TAG" --generate-notes --latest
-            fi
-          fi
 
   build:
     name: Build ${{ matrix.target }}
-    needs: prepare-release
+    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -94,37 +47,31 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            target_dir: target
             artifact_name: bulbascan
             asset_name: bulbascan-linux-amd64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            target_dir: target
             artifact_name: bulbascan.exe
             asset_name: bulbascan-windows-amd64.exe
           - os: macos-latest
             target: x86_64-apple-darwin
-            target_dir: target
             artifact_name: bulbascan
             asset_name: bulbascan-macos-amd64
           - os: macos-latest
             target: aarch64-apple-darwin
-            target_dir: target
             artifact_name: bulbascan
             asset_name: bulbascan-macos-arm64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            target_dir: target-cross
             artifact_name: bulbascan
             asset_name: bulbascan-linux-arm64
           - os: windows-latest
             target: i686-pc-windows-msvc
-            target_dir: target
             artifact_name: bulbascan.exe
             asset_name: bulbascan-windows-x86.exe
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -136,108 +83,56 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          shared-key: release-${{ matrix.target }}
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
 
       - name: Install Dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake clang libclang-dev llvm-dev pkg-config gcc-multilib g++-multilib nasm
-          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
-
+          sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib
+          
       - name: Install Dependencies (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         run: |
-          $nasm = Get-Command nasm -ErrorAction SilentlyContinue
-          if (-not $nasm) {
-            choco install nasm -y
-          }
-
-          $cmake = Get-Command cmake -ErrorAction SilentlyContinue
-          if (-not $cmake) {
-            foreach ($candidate in @(
-              "$env:ProgramFiles\\CMake\\bin\\cmake.exe",
-              "$env:ProgramFiles(x86)\\CMake\\bin\\cmake.exe"
-            )) {
-              if (Test-Path $candidate) {
-                $cmake = Get-Item $candidate
-                break
-              }
-            }
-          }
-          if (-not $cmake) {
-            throw "cmake not found on the runner"
-          }
-
-          $clang = Get-Command clang -ErrorAction SilentlyContinue
-          if (-not $clang) {
-            foreach ($candidate in @(
-              "$env:ProgramFiles\\LLVM\\bin\\clang.exe",
-              "$env:ProgramFiles(x86)\\LLVM\\bin\\clang.exe"
-            )) {
-              if (Test-Path $candidate) {
-                $clang = Get-Item $candidate
-                break
-              }
-            }
-          }
-          if (-not $clang) {
-            throw "clang not found on the runner"
-          }
-
-          $clangPath = if ($clang.Source) { $clang.Source } else { $clang.FullName }
-          $clangDir = Split-Path $clangPath -Parent
-          $libclang = Get-ChildItem -Path $clangDir -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $libclang) {
-            $libclang = Get-ChildItem -Path @(
-              "$env:ProgramFiles\\LLVM\\bin",
-              "$env:ProgramFiles(x86)\\LLVM\\bin"
-            ) -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $libclang) {
-            throw "libclang.dll not found on the runner"
-          }
-
-          $libclangDir = Split-Path $libclang.FullName -Parent
-          "LIBCLANG_PATH=$libclangDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
+          choco install cmake llvm -y
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
+          
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm cmake nasm
+          brew install llvm cmake
           echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
-      - name: Install Cross (Linux ARM64)
+      - name: Setup ARM Cross-Linker (Linux)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          cargo install --locked cross
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> $GITHUB_ENV
 
       - name: Build Release
-        shell: bash
-        run: |
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            export LIBCLANG_PATH=/usr/lib/llvm-10/lib
-            export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu
-            rm -rf "${{ matrix.target_dir }}"
-            cross build --release --locked --target "${{ matrix.target }}" --target-dir "${{ matrix.target_dir }}"
-          else
-            cargo build --release --locked --target "${{ matrix.target }}" --target-dir "${{ matrix.target_dir }}"
-          fi
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Prepare Artifact (Unix)
         if: runner.os != 'Windows'
-        run: mv ${{ matrix.target_dir }}/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_name }}
+        run: mv target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_name }}
 
       - name: Prepare Artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Move-Item -Path "${{ matrix.target_dir }}\${{ matrix.target }}\release\${{ matrix.artifact_name }}" -Destination "${{ matrix.asset_name }}"
+        run: Move-Item -Path "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" -Destination "${{ matrix.asset_name }}"
 
       - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: ${{ matrix.asset_name }}
+          fail_on_unmatched_files: true
+          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        shell: bash
-        run: gh release upload "$RELEASE_TAG" "${{ matrix.asset_name }}" --clobber

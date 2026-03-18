@@ -60,7 +60,7 @@ Flow:
 4. Promote `nightly` into `dev` weekly or monthly after enough changes accumulate.
 5. Test and stabilize in `dev`.
 6. Merge `dev` into `main` when ready to release.
-7. Run the release workflow manually from `main`; the workflow creates and publishes the release tag itself.
+7. Create release tags from `main`.
 
 Rules:
 

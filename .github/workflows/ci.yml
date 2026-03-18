@@ -9,19 +9,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v4
     
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -38,74 +36,26 @@ jobs:
       with:
         cache-on-failure: true
       
+    - name: Install NASM
+      uses: ilammy/setup-nasm@v1
+      
     - name: Install LLVM & Dependencies (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake clang libclang-dev llvm-dev pkg-config gcc-multilib g++-multilib nasm
-        echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
+        sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib
         
     - name: Install LLVM (Windows)
       if: runner.os == 'Windows'
-      shell: pwsh
+      shell: bash
       run: |
-        $nasm = Get-Command nasm -ErrorAction SilentlyContinue
-        if (-not $nasm) {
-          choco install nasm -y
-        }
-
-        $cmake = Get-Command cmake -ErrorAction SilentlyContinue
-        if (-not $cmake) {
-          foreach ($candidate in @(
-            "$env:ProgramFiles\\CMake\\bin\\cmake.exe",
-            "$env:ProgramFiles(x86)\\CMake\\bin\\cmake.exe"
-          )) {
-            if (Test-Path $candidate) {
-              $cmake = Get-Item $candidate
-              break
-            }
-          }
-        }
-        if (-not $cmake) {
-          throw "cmake not found on the runner"
-        }
-
-        $clang = Get-Command clang -ErrorAction SilentlyContinue
-        if (-not $clang) {
-          foreach ($candidate in @(
-            "$env:ProgramFiles\\LLVM\\bin\\clang.exe",
-            "$env:ProgramFiles(x86)\\LLVM\\bin\\clang.exe"
-          )) {
-            if (Test-Path $candidate) {
-              $clang = Get-Item $candidate
-              break
-            }
-          }
-        }
-        if (-not $clang) {
-          throw "clang not found on the runner"
-        }
-
-        $clangPath = if ($clang.Source) { $clang.Source } else { $clang.FullName }
-        $clangDir = Split-Path $clangPath -Parent
-        $libclang = Get-ChildItem -Path $clangDir -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $libclang) {
-          $libclang = Get-ChildItem -Path @(
-            "$env:ProgramFiles\\LLVM\\bin",
-            "$env:ProgramFiles(x86)\\LLVM\\bin"
-          ) -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
-        if (-not $libclang) {
-          throw "libclang.dll not found on the runner"
-        }
-
-        $libclangDir = Split-Path $libclang.FullName -Parent
-        "LIBCLANG_PATH=$libclangDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        choco install llvm cmake -y
+        echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
         
     - name: Install LLVM (macOS)
       if: runner.os == 'macOS'
       run: |
-        brew install llvm cmake nasm
+        brew install llvm cmake
         echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
 
     - name: Check compilation
