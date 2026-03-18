@@ -1,0 +1,10 @@
+.git
+.github
+target
+results
+results_*
+.bulbascan_workers
+state
+state_*
+*.log
+*.tmp

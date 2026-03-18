@@ -1,10 +1,12 @@
 use super::analysis::{
-    choose_better_signal, classify_redirect, classify_status_code, classify_transport_error,
-    is_block_status, is_transient_error, same_measurement, stabilize_scan_attempts,
+    apply_dns_evidence_adjustment, choose_better_signal, classify_redirect, classify_status_code,
+    classify_transport_error, is_block_status, is_transient_error, same_measurement,
+    stabilize_scan_attempts,
     status_from_verdict,
 };
 use super::browser::browser_proxy_server_arg;
 use super::comparison::{compare_result_pair, compare_with_control, summarize_service_geo};
+use super::reports::{write_human_report, write_manual_review_hotspot_report};
 use super::transport::{
     classify_control_proxy_error, evaluate_control_proxy_health, host_for_target,
 };
@@ -177,6 +179,177 @@ fn evidence_summary_formats_human_readable_context() {
 }
 
 #[test]
+fn human_report_includes_manual_review_hotspot_summary() {
+    let results = vec![
+        ScanResult {
+            domain: "challenge.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle {
+                source: Some("browser_dom".into()),
+                path: Some("/".into()),
+                final_url: None,
+                title: Some("Just a moment".into()),
+                signal: Some("Browser DOM: challenge page".into()),
+            },
+            network_evidence: NetworkEvidence::default(),
+            status: DomainStatus::Blocked,
+            verdict: Verdict::WafBlocked,
+            routing_decision: RoutingDecision::ManualReview,
+            confidence: 97,
+            http_status: Some(403),
+            reason: "Browser /: Browser DOM: challenge page".into(),
+            block_type: Some(BlockType::Waf),
+        },
+        ScanResult {
+            domain: "ok.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle::default(),
+            network_evidence: NetworkEvidence::default(),
+            status: DomainStatus::Ok,
+            verdict: Verdict::Accessible,
+            routing_decision: RoutingDecision::DirectOk,
+            confidence: 85,
+            http_status: Some(200),
+            reason: "OK".into(),
+            block_type: None,
+        },
+    ];
+
+    let report_path = std::env::temp_dir().join("bulbascan-human-report-hotspots-test.txt");
+    write_human_report(&results, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("Manual Review hotspots"));
+    assert!(report.contains("captcha_or_challenge: 1"));
+}
+
+#[test]
+fn manual_review_hotspot_report_distinguishes_control_ambiguity_and_transport_noise() {
+    let results = vec![
+        ScanResult {
+            domain: "weak-control.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle::default(),
+            network_evidence: NetworkEvidence::default(),
+            status: DomainStatus::Blocked,
+            verdict: Verdict::GeoBlocked,
+            routing_decision: RoutingDecision::ManualReview,
+            confidence: 78,
+            http_status: Some(451),
+            reason: "geo blocked".into(),
+            block_type: Some(BlockType::Geo),
+        },
+        ScanResult {
+            domain: "worker-error.example".into(),
+            service: None,
+            service_role: None,
+            evidence: EvidenceBundle {
+                source: Some("scanner".into()),
+                path: Some("/".into()),
+                final_url: None,
+                title: None,
+                signal: Some("worker error".into()),
+            },
+            network_evidence: NetworkEvidence {
+                dns: ProbeEvidence::failed("lookup failed"),
+                ..NetworkEvidence::default()
+            },
+            status: DomainStatus::Dead,
+            verdict: Verdict::Unreachable,
+            routing_decision: RoutingDecision::ManualReview,
+            confidence: 40,
+            http_status: None,
+            reason: "Error: worker error".into(),
+            block_type: None,
+        },
+    ];
+
+    let comparisons = vec![ComparisonResult {
+        domain: "weak-control.example".into(),
+        service: None,
+        service_role: None,
+        local_verdict: Verdict::GeoBlocked,
+        local_routing_decision: RoutingDecision::ManualReview,
+        local_confidence: 78,
+        local_evidence: EvidenceBundle::default(),
+        control_verdict: Verdict::Accessible,
+        control_routing_decision: RoutingDecision::DirectOk,
+        control_evidence: EvidenceBundle::default(),
+        decision: ComparisonDecision::NeedsReview,
+        local_network_evidence: NetworkEvidence::default(),
+        control_network_evidence: NetworkEvidence::default(),
+        network_notes: vec!["control direct signal is weak: verdict=accessible confidence=65".into()],
+        reason: "local route=manual_review but control direct evidence is too weak to promote confidently".into(),
+    }];
+
+    let report_path = std::env::temp_dir().join("bulbascan-manual-review-hotspots-test.txt");
+    write_manual_review_hotspot_report(&results, Some(&comparisons), None, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("control_path_ambiguity: 1"));
+    assert!(report.contains("transport_failure: 1"));
+    assert!(report.contains("guidance: control-path ambiguity means the comparison side is too weak"));
+}
+
+#[test]
+fn service_geo_report_includes_publication_tiers() {
+    let summaries = vec![
+        ServiceGeoSummary {
+            service: "StrictService".into(),
+            decision: ServiceGeoDecision::ConfirmedGeoBlocked,
+            confidence: 98,
+            observed_roles: vec!["web".into(), "api".into()],
+            missing_critical_roles: Vec::new(),
+            confirmed_hosts: vec!["strict.example".into()],
+            candidate_hosts: Vec::new(),
+            review_assisted_hosts: Vec::new(),
+            direct_hosts: Vec::new(),
+            reason: "confirmed".into(),
+        },
+        ServiceGeoSummary {
+            service: "ReviewService".into(),
+            decision: ServiceGeoDecision::LikelyGeoBlocked,
+            confidence: 82,
+            observed_roles: vec!["web".into()],
+            missing_critical_roles: vec!["api".into()],
+            confirmed_hosts: Vec::new(),
+            candidate_hosts: vec!["review.example".into()],
+            review_assisted_hosts: Vec::new(),
+            direct_hosts: Vec::new(),
+            reason: "partial".into(),
+        },
+        ServiceGeoSummary {
+            service: "DirectService".into(),
+            decision: ServiceGeoDecision::DirectOk,
+            confidence: 88,
+            observed_roles: vec!["web".into()],
+            missing_critical_roles: Vec::new(),
+            confirmed_hosts: Vec::new(),
+            candidate_hosts: Vec::new(),
+            review_assisted_hosts: Vec::new(),
+            direct_hosts: vec!["direct.example".into()],
+            reason: "direct".into(),
+        },
+    ];
+
+    let report_path = std::env::temp_dir().join("bulbascan-service-geo-publication-test.txt");
+    super::comparison::write_service_geo_report(&summaries, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("Publication guidance"));
+    assert!(report.contains("strict_publishable_services: StrictService"));
+    assert!(report.contains("review_only_services: ReviewService"));
+    assert!(report.contains("direct_only_services: DirectService"));
+    assert!(report.contains("publish_tier=strict_publishable"));
+}
+
+#[test]
 fn control_accessible_confirms_proxy_required() {
     let local = ScanResult {
         domain: "example.com".into(),
@@ -255,6 +428,238 @@ fn both_direct_paths_are_consistent_direct() {
 }
 
 #[test]
+fn weak_control_direct_signal_stays_needs_review() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::GeoBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 95,
+        http_status: Some(451),
+        reason: "blocked".into(),
+        block_type: Some(BlockType::Geo),
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 65,
+        http_status: Some(200),
+        reason: "weak ok".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison
+        .reason
+        .contains("control direct evidence is too weak"));
+    assert!(comparison
+        .network_notes
+        .iter()
+        .any(|note| note.contains("control direct signal is weak")));
+}
+
+#[test]
+fn weak_control_blocked_signal_does_not_force_consistent_blocked() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 93,
+        http_status: None,
+        reason: "network".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::Captcha,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 92,
+        http_status: Some(403),
+        reason: "captcha".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison
+        .reason
+        .contains("control is too weak to confirm a shared blocked outcome"));
+    assert!(comparison
+        .network_notes
+        .iter()
+        .any(|note| note.contains("control path is too weak")));
+}
+
+#[test]
+fn strong_control_blocked_signal_can_stay_consistent_blocked() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::ok("203.0.113.10"),
+            path_dns: ProbeEvidence::ok("203.0.113.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::skipped("tcp/443 failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 93,
+        http_status: None,
+        reason: "network".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::ok("198.51.100.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::failed("handshake failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 90,
+        http_status: None,
+        reason: "network".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::ConsistentBlocked);
+}
+
+#[test]
+fn direct_control_does_not_promote_transport_noise_into_proxy_required() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle {
+            source: Some("scanner".into()),
+            path: Some("/".into()),
+            final_url: None,
+            title: None,
+            signal: Some("worker error".into()),
+        },
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("lookup failed"),
+            path_dns: ProbeEvidence::failed("doh failed"),
+            tcp_443: ProbeEvidence::skipped("dns failed"),
+            tls_443: ProbeEvidence::skipped("dns failed"),
+            tcp_80: ProbeEvidence::skipped("dns failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 88,
+        http_status: None,
+        reason: "worker".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 90,
+        http_status: Some(200),
+        reason: "ok".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison
+        .network_notes
+        .iter()
+        .any(|note| note.contains("local signal is too weak for direct-vs-proxy promotion")));
+}
+
+#[test]
+fn strong_control_blocked_does_not_force_consistent_blocked_when_local_is_too_weak() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("lookup failed"),
+            path_dns: ProbeEvidence::failed("lookup failed"),
+            tcp_443: ProbeEvidence::skipped("dns failed"),
+            tls_443: ProbeEvidence::skipped("dns failed"),
+            tcp_80: ProbeEvidence::skipped("dns failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 62,
+        http_status: None,
+        reason: "weak local".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::ok("198.51.100.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::failed("handshake failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 92,
+        http_status: None,
+        reason: "blocked".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison.network_notes.iter().any(|note| note.contains(
+        "local side is too weak to confirm a shared blocked outcome"
+    )));
+}
+
+#[test]
 fn comparison_captures_network_notes_when_control_path_resolves() {
     let local = ScanResult {
         domain: "example.com".into(),
@@ -302,14 +707,257 @@ fn comparison_captures_network_notes_when_control_path_resolves() {
         comparison
             .network_notes
             .iter()
-            .any(|note| note.contains("local system DNS failed"))
+            .any(|note| note.contains("local system DNS failed") || note.contains("local DNS manipulation suspected"))
     );
     assert!(
         comparison
             .network_notes
             .iter()
-            .any(|note| note.contains("path DNS has no IP overlap"))
+            .any(|note| note.contains("DNS mismatch"))
     );
+}
+
+#[test]
+fn comparison_distinguishes_dns_manipulation_from_unhealthy_resolver() {
+    let base_control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::ok("198.51.100.20"),
+            tcp_443: ProbeEvidence::skipped("proxy mode"),
+            tls_443: ProbeEvidence::skipped("proxy mode"),
+            tcp_80: ProbeEvidence::skipped("proxy mode"),
+        },
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 85,
+        http_status: Some(200),
+        reason: "OK".into(),
+        block_type: None,
+    };
+
+    let manipulation_local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("kind=nxdomain resolver_control_ok: no such domain"),
+            path_dns: ProbeEvidence::ok("203.0.113.10"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::skipped("tcp/443 failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::NetworkBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 92,
+        http_status: None,
+        reason: "dns".into(),
+        block_type: None,
+    };
+
+    let unhealthy_local = ScanResult {
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("kind=servfail resolver_control_servfail: upstream failure"),
+            ..manipulation_local.network_evidence.clone()
+        },
+        ..manipulation_local.clone()
+    };
+
+    let manipulation = compare_result_pair(&manipulation_local, &base_control);
+    assert!(manipulation
+        .network_notes
+        .iter()
+        .any(|note| note.contains("local DNS manipulation suspected")));
+
+    let unhealthy = compare_result_pair(&unhealthy_local, &base_control);
+    assert!(unhealthy
+        .network_notes
+        .iter()
+        .any(|note| note.contains("local resolver appears unhealthy")));
+}
+
+#[test]
+fn comparison_report_summarizes_dns_signal_buckets() {
+    let comparisons = vec![ComparisonResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        local_verdict: Verdict::NetworkBlocked,
+        local_routing_decision: RoutingDecision::ProxyRequired,
+        local_confidence: 92,
+        local_evidence: EvidenceBundle::default(),
+        control_verdict: Verdict::Accessible,
+        control_routing_decision: RoutingDecision::DirectOk,
+        control_evidence: EvidenceBundle::default(),
+        decision: ComparisonDecision::ConfirmedProxyRequired,
+        local_network_evidence: NetworkEvidence::default(),
+        control_network_evidence: NetworkEvidence::default(),
+        network_notes: vec![
+            "local DNS manipulation suspected: system resolver returned nxdomain while control path DNS resolved".into(),
+            "DNS mismatch confirmed by failed direct tcp/tls: local=203.0.113.10 control=198.51.100.20".into(),
+        ],
+        reason: "comparison".into(),
+    }];
+
+    let report_path = std::env::temp_dir().join("bulbascan-comparison-report-test.txt");
+    super::comparison::write_control_comparison_report(&comparisons, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("DNS signals"));
+    assert!(report.contains("dns_manipulation_suspected: 1"));
+    assert!(report.contains("dns_mismatch_confirmed: 1"));
+}
+
+#[test]
+fn weak_control_needs_review_is_labeled_as_control_path_ambiguity() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Blocked,
+        verdict: Verdict::GeoBlocked,
+        routing_decision: RoutingDecision::ProxyRequired,
+        confidence: 94,
+        http_status: Some(451),
+        reason: "geo".into(),
+        block_type: Some(BlockType::Geo),
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 65,
+        http_status: Some(200),
+        reason: "ok".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison.reason.starts_with("control-path ambiguity:"));
+}
+
+#[test]
+fn worker_error_needs_review_is_labeled_as_transport_ambiguity() {
+    let local = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle {
+            source: Some("scanner".into()),
+            path: Some("/".into()),
+            final_url: None,
+            title: None,
+            signal: Some("worker error".into()),
+        },
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::failed("lookup failed"),
+            path_dns: ProbeEvidence::failed("doh failed"),
+            tcp_443: ProbeEvidence::skipped("dns failed"),
+            tls_443: ProbeEvidence::skipped("dns failed"),
+            tcp_80: ProbeEvidence::skipped("dns failed"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 40,
+        http_status: None,
+        reason: "Error: worker error".into(),
+        block_type: None,
+    };
+    let control = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle {
+            source: Some("transport".into()),
+            path: Some("/".into()),
+            final_url: None,
+            title: None,
+            signal: Some("timeout".into()),
+        },
+        network_evidence: NetworkEvidence {
+            dns: ProbeEvidence::skipped("proxy mode"),
+            path_dns: ProbeEvidence::failed("connect failed"),
+            tcp_443: ProbeEvidence::skipped("proxy mode"),
+            tls_443: ProbeEvidence::skipped("proxy mode"),
+            tcp_80: ProbeEvidence::skipped("proxy mode"),
+        },
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 58,
+        http_status: None,
+        reason: "timeout".into(),
+        block_type: None,
+    };
+
+    let comparison = compare_result_pair(&local, &control);
+    assert_eq!(comparison.decision, ComparisonDecision::NeedsReview);
+    assert!(comparison.reason.starts_with("transport ambiguity:"));
+}
+
+#[test]
+fn comparison_report_summarizes_needs_review_breakdown() {
+    let comparisons = vec![
+        ComparisonResult {
+            domain: "control.example".into(),
+            service: None,
+            service_role: None,
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ManualReview,
+            local_confidence: 75,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::NeedsReview,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: vec!["control direct signal is weak: verdict=accessible confidence=65".into()],
+            reason: "control-path ambiguity: control side is too weak to separate local blocking from broader failure".into(),
+        },
+        ComparisonResult {
+            domain: "transport.example".into(),
+            service: None,
+            service_role: None,
+            local_verdict: Verdict::Unreachable,
+            local_routing_decision: RoutingDecision::ManualReview,
+            local_confidence: 40,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Unreachable,
+            control_routing_decision: RoutingDecision::ManualReview,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::NeedsReview,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "transport ambiguity: both local and control paths are too noisy to classify confidently".into(),
+        },
+    ];
+
+    let report_path = std::env::temp_dir().join("bulbascan-comparison-needs-review-breakdown.txt");
+    super::comparison::write_control_comparison_report(&comparisons, &report_path).unwrap();
+    let report = std::fs::read_to_string(&report_path).unwrap();
+    let _ = std::fs::remove_file(report_path);
+
+    assert!(report.contains("Needs review breakdown"));
+    assert!(report.contains("control_path_ambiguity: 1"));
+    assert!(report.contains("transport_ambiguity: 1"));
 }
 
 #[test]
@@ -366,6 +1014,106 @@ fn comparison_preserves_side_specific_evidence() {
         Some("http_body")
     );
     assert_eq!(comparison.control_evidence.path.as_deref(), Some("/"));
+}
+
+#[test]
+fn dns_failure_with_working_doh_escalates_to_network_blocked() {
+    let result = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 55,
+        http_status: None,
+        reason: "dns lookup failed".into(),
+        block_type: None,
+    };
+
+    let adjusted = apply_dns_evidence_adjustment(
+        result,
+        &NetworkEvidence {
+            dns: ProbeEvidence::failed("kind=nxdomain resolver_control_ok: no such domain"),
+            path_dns: ProbeEvidence::ok("1.1.1.1, 1.0.0.1"),
+            tcp_443: ProbeEvidence::skipped("dns failed"),
+            tls_443: ProbeEvidence::skipped("dns failed"),
+            tcp_80: ProbeEvidence::skipped("dns failed"),
+        },
+    );
+
+    assert_eq!(adjusted.verdict, Verdict::NetworkBlocked);
+    assert_eq!(adjusted.routing_decision, RoutingDecision::ProxyRequired);
+    assert!(adjusted.reason.contains("system DNS nxdomain while DoH resolved"));
+}
+
+#[test]
+fn dns_mismatch_is_recorded_without_overriding_accessible_result() {
+    let result = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Ok,
+        verdict: Verdict::Accessible,
+        routing_decision: RoutingDecision::DirectOk,
+        confidence: 85,
+        http_status: Some(200),
+        reason: "OK".into(),
+        block_type: None,
+    };
+
+    let adjusted = apply_dns_evidence_adjustment(
+        result,
+        &NetworkEvidence {
+            dns: ProbeEvidence::ok("203.0.113.10, 203.0.113.11"),
+            path_dns: ProbeEvidence::ok("198.51.100.10, 198.51.100.11"),
+            tcp_443: ProbeEvidence::ok("203.0.113.10:443"),
+            tls_443: ProbeEvidence::ok("203.0.113.10:443 cert=abcd"),
+            tcp_80: ProbeEvidence::ok("203.0.113.10:80"),
+        },
+    );
+
+    assert_eq!(adjusted.verdict, Verdict::Accessible);
+    assert_eq!(adjusted.routing_decision, RoutingDecision::DirectOk);
+    assert!(adjusted.reason.contains("system DNS differs from DoH"));
+}
+
+#[test]
+fn dns_mismatch_with_failed_direct_tcp_tls_escalates_to_network_blocked() {
+    let result = ScanResult {
+        domain: "example.com".into(),
+        service: None,
+        service_role: None,
+        evidence: EvidenceBundle::default(),
+        network_evidence: NetworkEvidence::default(),
+        status: DomainStatus::Dead,
+        verdict: Verdict::Unreachable,
+        routing_decision: RoutingDecision::ManualReview,
+        confidence: 55,
+        http_status: None,
+        reason: "connect failed".into(),
+        block_type: None,
+    };
+
+    let adjusted = apply_dns_evidence_adjustment(
+        result,
+        &NetworkEvidence {
+            dns: ProbeEvidence::ok("203.0.113.10, 203.0.113.11"),
+            path_dns: ProbeEvidence::ok("198.51.100.10, 198.51.100.11"),
+            tcp_443: ProbeEvidence::failed("connect failed"),
+            tls_443: ProbeEvidence::skipped("tcp/443 failed"),
+            tcp_80: ProbeEvidence::failed("connect failed"),
+        },
+    );
+
+    assert_eq!(adjusted.verdict, Verdict::NetworkBlocked);
+    assert_eq!(adjusted.routing_decision, RoutingDecision::ProxyRequired);
+    assert!(adjusted.reason.contains("system DNS differs from DoH"));
+    assert!(adjusted.reason.contains("failed on direct TCP/TLS probes"));
 }
 
 #[test]
@@ -702,6 +1450,68 @@ fn single_confirmed_known_role_is_only_likely_when_bundle_is_incomplete() {
 }
 
 #[test]
+fn complete_anthropic_critical_roles_can_confirm_service_blocking() {
+    let comparisons = vec![
+        ComparisonResult {
+            domain: "claude.ai".into(),
+            service: Some("Anthropic".into()),
+            service_role: Some("web".into()),
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ProxyRequired,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::ConfirmedProxyRequired,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "confirmed".into(),
+        },
+        ComparisonResult {
+            domain: "platform.claude.com".into(),
+            service: Some("Anthropic".into()),
+            service_role: Some("console".into()),
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ProxyRequired,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::ConfirmedProxyRequired,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "confirmed".into(),
+        },
+        ComparisonResult {
+            domain: "api.anthropic.com".into(),
+            service: Some("Anthropic".into()),
+            service_role: Some("api".into()),
+            local_verdict: Verdict::GeoBlocked,
+            local_routing_decision: RoutingDecision::ProxyRequired,
+            local_evidence: EvidenceBundle::default(),
+            control_verdict: Verdict::Accessible,
+            control_routing_decision: RoutingDecision::DirectOk,
+            control_evidence: EvidenceBundle::default(),
+            decision: ComparisonDecision::ConfirmedProxyRequired,
+            local_network_evidence: NetworkEvidence::default(),
+            control_network_evidence: NetworkEvidence::default(),
+            network_notes: Vec::new(),
+            reason: "confirmed".into(),
+        },
+    ];
+
+    let summaries = summarize_service_geo(&comparisons);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].decision,
+        ServiceGeoDecision::ConfirmedGeoBlocked
+    );
+    assert!(summaries[0].missing_critical_roles.is_empty());
+}
+
+#[test]
 fn review_assisted_critical_role_can_make_service_likely_geo_blocked() {
     let comparisons = vec![
         ComparisonResult {
@@ -845,6 +1655,38 @@ fn all_direct_critical_roles_can_keep_service_direct_even_with_noncritical_noise
 }
 
 #[test]
+fn multi_role_host_can_satisfy_missing_critical_service_roles() {
+    let comparisons = vec![ComparisonResult {
+        domain: "disneyplus.com".into(),
+        service: Some("Disney+".into()),
+        service_role: Some("storefront".into()),
+        local_verdict: Verdict::GeoBlocked,
+        local_routing_decision: RoutingDecision::ProxyRequired,
+        local_confidence: 99,
+        local_evidence: EvidenceBundle::default(),
+        control_verdict: Verdict::Accessible,
+        control_routing_decision: RoutingDecision::DirectOk,
+        control_evidence: EvidenceBundle::default(),
+        decision: ComparisonDecision::ConfirmedProxyRequired,
+        local_network_evidence: NetworkEvidence::default(),
+        control_network_evidence: NetworkEvidence::default(),
+        network_notes: Vec::new(),
+        reason: "confirmed".into(),
+    }];
+
+    let summaries = summarize_service_geo(&comparisons);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].decision,
+        ServiceGeoDecision::ConfirmedGeoBlocked
+    );
+    assert!(
+        summaries[0].missing_critical_roles.is_empty(),
+        "expected multi-role host coverage to satisfy playback"
+    );
+}
+
+#[test]
 fn all_non_direct_critical_roles_with_geo_marker_can_still_be_likely_geo_blocked() {
     let comparisons = vec![
         ComparisonResult {
@@ -908,6 +1750,7 @@ fn safe_policy_limits_probe_budget() {
     assert_eq!(policy.profile, ScanProfile::Safe);
     assert_eq!(policy.max_secondary_probes, 1);
     assert_eq!(policy.max_browser_probe_paths, 1);
+    assert_eq!(policy.max_browser_verifications, 8);
     assert!(!policy.allow_control_browser_verify);
     assert_eq!(policy.retest_attempts, 1);
     assert_eq!(policy.retest_backoff_ms, 350);
@@ -918,7 +1761,8 @@ fn aggressive_policy_unlocks_full_probe_budget() {
     let policy = ScanPolicy::aggressive();
     assert_eq!(policy.profile, ScanProfile::Aggressive);
     assert_eq!(policy.max_secondary_probes, usize::MAX);
-    assert_eq!(policy.max_browser_probe_paths, usize::MAX);
+    assert_eq!(policy.max_browser_probe_paths, 2);
+    assert_eq!(policy.max_browser_verifications, 96);
     assert!(policy.allow_control_browser_verify);
     assert_eq!(policy.retest_attempts, 2);
     assert_eq!(policy.retest_backoff_ms, 250);

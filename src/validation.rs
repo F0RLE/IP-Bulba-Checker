@@ -301,6 +301,17 @@ pub fn write_validation_report(
         writeln!(&mut report)?;
         writeln!(&mut report, "Comparison distribution")?;
         write_count_section(&mut report, &comparison_counts)?;
+
+        writeln!(&mut report)?;
+        writeln!(&mut report, "Publication guidance")?;
+        for line in comparison_publication_guidance(
+            confirmed_proxy_required,
+            candidate_proxy_required,
+            comparisons.len(),
+            locally_proxy_required_with_comparison,
+        ) {
+            writeln!(&mut report, "- {line}")?;
+        }
     }
 
     if let Some(service_geo) = service_geo {
@@ -344,6 +355,9 @@ pub fn write_validation_report(
             "- services_missing_critical_roles: {}",
             format_strings(&top_incomplete_services)
         )?;
+        for line in service_publication_guidance(service_geo) {
+            writeln!(&mut report, "- {line}")?;
+        }
     }
 
     std::fs::write(output_path, report)?;
@@ -360,6 +374,64 @@ where
         *counts.entry(value.into()).or_default() += 1;
     }
     counts
+}
+
+fn comparison_publication_guidance(
+    confirmed_proxy_required: usize,
+    candidate_proxy_required: usize,
+    comparison_total: usize,
+    locally_proxy_required_with_comparison: usize,
+) -> Vec<String> {
+    let mut guidance = Vec::new();
+
+    if comparison_total == 0 {
+        guidance.push(
+            "no dual-vantage comparison data is available; treat local routing outputs as draft-only"
+                .to_string(),
+        );
+        return guidance;
+    }
+
+    guidance.push(format!(
+        "publication-grade strict exports should come from confirmed comparison outputs only ({confirmed_proxy_required} confirmed domains)"
+    ));
+
+    if candidate_proxy_required > 0 {
+        guidance.push(format!(
+            "keep candidate_proxy_required domains ({candidate_proxy_required}) in review until later refresh cycles or stronger confirmation"
+        ));
+    }
+
+    if locally_proxy_required_with_comparison > 0 && confirmed_proxy_required == 0 {
+        guidance.push(
+            "local proxy-required decisions are not yet confirmed by the control path, so broad publication would be premature"
+                .to_string(),
+        );
+    }
+
+    guidance.push(
+        "manual_review and unconfirmed local-only proxy buckets should not be published into strict router lists"
+            .to_string(),
+    );
+
+    guidance
+}
+
+fn service_publication_guidance(service_geo: &[ServiceGeoSummary]) -> Vec<String> {
+    let incomplete_services = service_geo
+        .iter()
+        .filter(|summary| !summary.missing_critical_roles.is_empty())
+        .count();
+
+    if incomplete_services == 0 {
+        return vec![
+            "known-service bundle exports have complete critical-role coverage for the currently summarized services".to_string(),
+        ];
+    }
+
+    vec![format!(
+        "known-service bundle exports still need review for {incomplete_services} services with missing critical roles"
+    )]
 }
 
 fn write_count_section(
@@ -724,6 +796,11 @@ mod tests {
         assert!(content.contains("Dual-vantage quality"));
         assert!(content.contains("Service bundle quality"));
         assert!(content.contains("strict_confirmation_rate_vs_local_proxy_required"));
+        assert!(content.contains("Publication guidance"));
+        assert!(content.contains(
+            "publication-grade strict exports should come from confirmed comparison outputs only"
+        ));
+        assert!(content.contains("known-service bundle exports still need review"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

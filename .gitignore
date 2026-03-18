@@ -9,6 +9,8 @@ results/
 results_*/
 geosite.dat
 *.exe
+state-ru
+.bulbascan_workers
 
 # OS generated files
 .DS_Store
