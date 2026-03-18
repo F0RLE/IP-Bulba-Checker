@@ -608,9 +608,11 @@ async fn main() -> anyhow::Result<()> {
             Ok(paths) => println!("Router-native exports saved to {}.", paths.join(", ")),
             Err(e) => eprintln!("Error writing router-native exports: {e}"),
         }
-        match router_exports::write_generic_apex_exports(&scan_results, &args.results_dir) {
-            Ok(paths) => println!("Generic apex exports saved to {}.", paths.join(", ")),
-            Err(e) => eprintln!("Error writing generic apex exports: {e}"),
+        if args.export_profile == ExportProfileArg::Full {
+            match router_exports::write_generic_apex_exports(&scan_results, &args.results_dir) {
+                Ok(paths) => println!("Generic apex exports saved to {}.", paths.join(", ")),
+                Err(e) => eprintln!("Error writing generic apex exports: {e}"),
+            }
         }
     }
     if args.export_profile == ExportProfileArg::Full {
@@ -825,16 +827,18 @@ async fn main() -> anyhow::Result<()> {
                     ),
                     Err(e) => eprintln!("Error writing strict router-native exports: {e}"),
                 }
-                match router_exports::write_split_router_exports(
-                    &comparisons,
-                    &service_geo,
-                    &args.results_dir,
-                ) {
-                    Ok(paths) => println!(
-                        "Known-service and generic split exports saved to {}.",
-                        paths.join(", ")
-                    ),
-                    Err(e) => eprintln!("Error writing split router exports: {e}"),
+                if args.export_profile == ExportProfileArg::Full {
+                    match router_exports::write_split_router_exports(
+                        &comparisons,
+                        &service_geo,
+                        &args.results_dir,
+                    ) {
+                        Ok(paths) => println!(
+                            "Known-service and generic split exports saved to {}.",
+                            paths.join(", ")
+                        ),
+                        Err(e) => eprintln!("Error writing split router exports: {e}"),
+                    }
                 }
             }
             if args.export_profile == ExportProfileArg::Full {

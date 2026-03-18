@@ -216,6 +216,9 @@ Use this when you want to refresh router outputs quickly and are willing to acce
 bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http://user:pass@proxy:port --state-dir state-ru --export-profile router --timeout 6 --profile safe
 ```
 
+`router` keeps the output bundle smaller.
+Use `full` when you specifically need validation and advanced `bundle` / `apex` exports.
+
 Use this mode when:
 
 - you mainly care about router exports

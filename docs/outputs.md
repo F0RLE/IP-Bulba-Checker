@@ -78,6 +78,8 @@ Everything in `simple`, plus:
 | `yaml/` | Mihomo provider snippets |
 | `bin/` | `geosite.dat`, `.srs`, `.mrs` when local compilers are available |
 
+`router` keeps the output surface focused on the main operator and deployment files.
+
 ### `full`
 
 Adds validation output on top of `router`.
@@ -85,6 +87,8 @@ Adds validation output on top of `router`.
 | Path | Contents |
 |---|---|
 | `txt/validation.txt` | Validation report against annotated expected outcomes |
+| `bundle*` outputs | Known-service minimal bundles |
+| `apex*` outputs | Generic apex bypass exports for unmapped domains |
 
 ---
 
@@ -195,7 +199,7 @@ Use these diagnostics when something looks off:
 - `txt/validation.txt`
 - `txt/hotspots.txt`
 
-Treat specialized `bundle*` and `apex*` exports as advanced compatibility outputs, not as the first files to open.
+Treat specialized `bundle*` and `apex*` exports as advanced compatibility outputs. They are generated only in `full`.
 
 ---
 
