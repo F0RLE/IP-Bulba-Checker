@@ -292,7 +292,7 @@ While a scan is running:
 | `↓` | Decrease workers by 1 |
 | `q` / `Esc` | Cancel scan |
 
-The last live worker count is saved to `.bulbascan_workers` and reused on the next run unless `--concurrency` is explicitly set.
+The last live worker count is saved in the user config area (`APPDATA/Bulbascan/workers.txt` on Windows) and reused on the next run unless `--concurrency` is explicitly set.
 
 ---
 

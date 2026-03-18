@@ -33,7 +33,7 @@ use pipeline::{
 };
 
 // ── Worker count persistence ───────────────────────────────────────────────
-// Saved to .bulbascan_workers in CWD; overridden if --concurrency is explicit.
+// Saved in a user config location; overridden if --concurrency is explicit.
 const WORKERS_FILE: &str = ".bulbascan_workers";
 const DEFAULT_WORKERS: usize = 50;
 const TXT_DIR: &str = "txt";
@@ -41,14 +41,31 @@ const JSON_DIR: &str = "json";
 const YAML_DIR: &str = "yaml";
 const BIN_DIR: &str = "bin";
 
-fn load_workers(path: &str) -> Option<usize> {
+fn worker_state_path() -> std::path::PathBuf {
+    let base_dir = if cfg!(windows) {
+        std::env::var_os("APPDATA").map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+    } else if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        std::path::PathBuf::from(xdg)
+    } else if let Some(home) = std::env::var_os("HOME") {
+        std::path::PathBuf::from(home).join(".config")
+    } else {
+        std::env::temp_dir()
+    };
+
+    base_dir.join("Bulbascan").join("workers.txt")
+}
+
+fn load_workers(path: &std::path::Path) -> Option<usize> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .filter(|&n: &usize| (1..=1000).contains(&n))
 }
 
-fn save_workers(path: &str, n: usize) {
+fn save_workers(path: &std::path::Path, n: usize) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let _ = std::fs::write(path, n.to_string());
 }
 
@@ -96,11 +113,17 @@ async fn main() -> anyhow::Result<()> {
     let mut args = Args::from_arg_matches(&matches)?;
     let loaded_config = config::load_and_apply(&mut args, &matches)?;
     let version = env!("CARGO_PKG_VERSION");
+    let worker_state_path = worker_state_path();
+    let legacy_worker_path = std::path::Path::new(WORKERS_FILE);
 
     // Resolve concurrency: CLI flag wins, else last-saved value, else default.
     let concurrency: usize = args
         .concurrency
-        .unwrap_or_else(|| load_workers(WORKERS_FILE).unwrap_or(DEFAULT_WORKERS))
+        .unwrap_or_else(|| {
+            load_workers(&worker_state_path)
+                .or_else(|| load_workers(legacy_worker_path))
+                .unwrap_or(DEFAULT_WORKERS)
+        })
         .clamp(1, 1000);
 
     let using_default_results_dir = args.results_dir == std::path::Path::new("results");
@@ -518,7 +541,7 @@ async fn main() -> anyhow::Result<()> {
         };
         // Persist the live-adjusted worker count for next run.
         final_workers = fw;
-        save_workers(WORKERS_FILE, fw);
+        save_workers(&worker_state_path, fw);
         results
     };
 
