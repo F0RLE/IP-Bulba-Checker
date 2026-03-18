@@ -26,9 +26,9 @@ bulbascan domains.txt
 
 This writes the default simple outputs:
 
-- `blocked-domains.txt`
-- `blocked.log`
-- `geosite.dat`
+- `txt/blocked.txt`
+- `txt/blocked.log`
+- `bin/geosite.dat`
 
 ---
 
@@ -175,7 +175,7 @@ bulbascan geosite.dat --import-geosite-category ru-blocked --control-proxy http:
 Use this mode when:
 
 - you are validating a new control proxy
-- you want `comparison_report.txt` and `service_geo_report.txt`
+- you want `txt/comparison.txt` and `txt/service-geo.txt`
 - you are building a high-confidence routing list
 
 Tradeoffs:
@@ -256,7 +256,7 @@ Practical note:
 |  | `--xray-socks-listen` | `127.0.0.1:1080` | Listen address for generated Xray SOCKS inbound |
 | `-k` | `--out-ok` | `ok.log` | Accessible-domain log file name |
 | `-l` | `--out-blocked` | `blocked.log` | Blocked-domain log file name |
-| `-B` | `--blocked-list` | `blocked-domains.txt` | Blocked-domain list file name |
+| `-B` | `--blocked-list` | `blocked.txt` | Blocked-domain list file name |
 | `-F` | `--blocked-list-format` | `plain` | `plain` / `geosite-source` |
 | `-m` | `--merge-into-list` | — | Merge detected blocked domains into an existing list |
 | `-d` | `--geosite` | `geosite.dat` | Output geosite filename |
@@ -427,7 +427,7 @@ The state directory maintains:
 
 - `blocked.txt`
 - `direct.txt`
-- `manual_review.txt`
+- `txt/review.txt`
 - `rescan-hot.txt`
 - `rescan-warm.txt`
 - `rescan-cold.txt`
@@ -440,9 +440,9 @@ On later runs:
 
 For incremental publication:
 
-- `publish-strict-domains.txt` is the publication-grade tier
+- `txt/publish-strict.txt` is the publication-grade tier
 - `publish-review-domains.txt` is the holdback tier for later refresh cycles
-- `publication_report.txt` explains what is safe to publish now and what still belongs in review
+- `txt/publication.txt` explains what is safe to publish now and what still belongs in review
 
 ---
 

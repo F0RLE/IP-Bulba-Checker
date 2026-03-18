@@ -127,8 +127,8 @@
   - Implemented:
     - confidence summaries
     - `ManualReview` hotspot reporting by root cause with operator guidance
-    - publication guidance in `validation_report.txt`
-    - service publication tiers in `service_geo_report.txt`
+    - publication guidance in `txt/validation.txt`
+    - service publication tiers in `txt/service-geo.txt`
 
 - **Incremental Publishing Workflow**
   - Usefulness: 8/10
@@ -136,7 +136,7 @@
   - What it gives: staged publish artifacts and refresh queues instead of treating every scan as a full reset.
   - Implemented:
     - publication tiers (`publish-strict`, `publish-review`, `publish-direct`)
-    - operator-facing `publication_report.txt`
+    - operator-facing `txt/publication.txt`
     - hot / warm / cold rescan queue files
     - queue persistence into `--state-dir` for later cycles
 
@@ -148,6 +148,15 @@
     - browser auto-detection through env overrides, `PATH`, and common install locations
     - plain-text progress fallback when ANSI / VT support is unavailable
     - more consistent browser-assisted confirmation across supported desktop platforms
+
+- **Output layout simplification**
+  - Usefulness: 7/10
+  - Status: completed
+  - What it gives: a cleaner `results_dir` with grouped outputs and shorter file names.
+  - Implemented:
+    - outputs are grouped into `txt/`, `json/`, `yaml/`, and `bin/`
+    - human-facing reports and lists use shorter names such as `comparison.txt`, `service-geo.txt`, and `publication.txt`
+    - router and client exports keep the same logical coverage but no longer flood the top level of the results directory
 
 ## Experimental
 

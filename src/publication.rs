@@ -4,13 +4,14 @@ use std::path::Path;
 
 use crate::scanner::{ComparisonDecision, ComparisonResult, RoutingDecision, ScanResult, Verdict};
 
-const PUBLISH_STRICT_FILE: &str = "publish-strict-domains.txt";
-const PUBLISH_REVIEW_FILE: &str = "publish-review-domains.txt";
-const PUBLISH_DIRECT_FILE: &str = "publish-direct-domains.txt";
+const TXT_DIR: &str = "txt";
+const PUBLISH_STRICT_FILE: &str = "publish-strict.txt";
+const PUBLISH_REVIEW_FILE: &str = "publish-review.txt";
+const PUBLISH_DIRECT_FILE: &str = "publish-direct.txt";
 const HOT_RESCAN_FILE: &str = "rescan-hot.txt";
 const WARM_RESCAN_FILE: &str = "rescan-warm.txt";
 const COLD_RESCAN_FILE: &str = "rescan-cold.txt";
-const PUBLICATION_REPORT_FILE: &str = "publication_report.txt";
+const PUBLICATION_REPORT_FILE: &str = "publication.txt";
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct PublicationPlan {
@@ -55,24 +56,20 @@ pub(crate) fn write_publication_outputs(
     state_dir: Option<&Path>,
 ) -> anyhow::Result<()> {
     let plan = build_publication_plan(results, comparisons);
+    let txt_dir = results_dir.join(TXT_DIR);
+    std::fs::create_dir_all(&txt_dir)?;
 
     write_list(
-        &results_dir.join(PUBLISH_STRICT_FILE),
+        &txt_dir.join(PUBLISH_STRICT_FILE),
         &plan.strict_publish_vec(),
     )?;
-    write_list(
-        &results_dir.join(PUBLISH_REVIEW_FILE),
-        &plan.review_only_vec(),
-    )?;
-    write_list(
-        &results_dir.join(PUBLISH_DIRECT_FILE),
-        &plan.direct_only_vec(),
-    )?;
-    write_list(&results_dir.join(HOT_RESCAN_FILE), &plan.hot_rescan_vec())?;
-    write_list(&results_dir.join(WARM_RESCAN_FILE), &plan.warm_rescan_vec())?;
-    write_list(&results_dir.join(COLD_RESCAN_FILE), &plan.cold_rescan_vec())?;
+    write_list(&txt_dir.join(PUBLISH_REVIEW_FILE), &plan.review_only_vec())?;
+    write_list(&txt_dir.join(PUBLISH_DIRECT_FILE), &plan.direct_only_vec())?;
+    write_list(&txt_dir.join(HOT_RESCAN_FILE), &plan.hot_rescan_vec())?;
+    write_list(&txt_dir.join(WARM_RESCAN_FILE), &plan.warm_rescan_vec())?;
+    write_list(&txt_dir.join(COLD_RESCAN_FILE), &plan.cold_rescan_vec())?;
     std::fs::write(
-        results_dir.join(PUBLICATION_REPORT_FILE),
+        txt_dir.join(PUBLICATION_REPORT_FILE),
         render_publication_report(&plan, comparisons),
     )?;
 
@@ -356,7 +353,7 @@ mod tests {
 
         write_publication_outputs(&results, None, &dir, Some(&state)).unwrap();
 
-        let report = std::fs::read_to_string(dir.join("publication_report.txt")).unwrap();
+        let report = std::fs::read_to_string(dir.join("txt").join("publication.txt")).unwrap();
         assert!(report.contains("Publication tiers"));
         assert!(report.contains("Rescan queues"));
         assert!(state.join("rescan-hot.txt").exists());

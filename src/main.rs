@@ -36,6 +36,10 @@ use pipeline::{
 // Saved to .bulbascan_workers in CWD; overridden if --concurrency is explicit.
 const WORKERS_FILE: &str = ".bulbascan_workers";
 const DEFAULT_WORKERS: usize = 50;
+const TXT_DIR: &str = "txt";
+const JSON_DIR: &str = "json";
+const YAML_DIR: &str = "yaml";
+const BIN_DIR: &str = "bin";
 
 fn load_workers(path: &str) -> Option<usize> {
     std::fs::read_to_string(path)
@@ -46,6 +50,10 @@ fn load_workers(path: &str) -> Option<usize> {
 
 fn save_workers(path: &str, n: usize) {
     let _ = std::fs::write(path, n.to_string());
+}
+
+fn output_path(results_dir: &std::path::Path, bucket: &str, file: &str) -> std::path::PathBuf {
+    results_dir.join(bucket).join(file)
 }
 
 /// Look up the 2-letter country code seen from `proxy` (or from the local path
@@ -197,41 +205,51 @@ async fn main() -> anyhow::Result<()> {
     if !args.results_dir.exists() {
         tokio::fs::create_dir_all(&args.results_dir).await?;
     }
+    for bucket in [TXT_DIR, JSON_DIR, YAML_DIR, BIN_DIR] {
+        tokio::fs::create_dir_all(args.results_dir.join(bucket)).await?;
+    }
 
     // Prepare paths
-    let out_ok = args.results_dir.join(&args.out_ok);
-    let out_blocked = args.results_dir.join(&args.out_blocked);
+    let out_ok = output_path(&args.results_dir, TXT_DIR, &args.out_ok.to_string_lossy());
+    let out_blocked = output_path(
+        &args.results_dir,
+        TXT_DIR,
+        &args.out_blocked.to_string_lossy(),
+    );
     let out_ok_cleanup_path = out_ok.clone();
-    let geosite_path = args.results_dir.join(&args.geosite);
-    let report_path = args.results_dir.join("report.txt");
-    let services_report_path = args.results_dir.join("services_report.txt");
-    let manual_review_hotspots_path = args.results_dir.join("manual_review_hotspots.txt");
-    let proxy_required_path = args.results_dir.join("proxy_required.txt");
-    let direct_ok_path = args.results_dir.join("direct_ok.txt");
-    let manual_review_path = args.results_dir.join("manual_review.txt");
-    let blocked_domains_path = args.results_dir.join(&args.blocked_list);
-    let comparison_report_path = args.results_dir.join("comparison_report.txt");
-    let confirmed_proxy_required_path = args.results_dir.join("confirmed_proxy_required.txt");
-    let control_proxy_health_path = args.results_dir.join("control_proxy_health.txt");
-    let service_geo_report_path = args.results_dir.join("service_geo_report.txt");
-    let validation_report_path = args.results_dir.join("validation_report.txt");
-    let strict_sing_box_rule_set_path = args.results_dir.join("strict-sing-box-rule-set.json");
+    let geosite_path = output_path(&args.results_dir, BIN_DIR, &args.geosite.to_string_lossy());
+    let report_path = output_path(&args.results_dir, TXT_DIR, "report.txt");
+    let services_report_path = output_path(&args.results_dir, TXT_DIR, "services.txt");
+    let manual_review_hotspots_path = output_path(&args.results_dir, TXT_DIR, "hotspots.txt");
+    let proxy_required_path = output_path(&args.results_dir, TXT_DIR, "proxy.txt");
+    let direct_ok_path = output_path(&args.results_dir, TXT_DIR, "direct.txt");
+    let manual_review_path = output_path(&args.results_dir, TXT_DIR, "review.txt");
+    let blocked_domains_path = output_path(
+        &args.results_dir,
+        TXT_DIR,
+        &args.blocked_list.to_string_lossy(),
+    );
+    let comparison_report_path = output_path(&args.results_dir, TXT_DIR, "comparison.txt");
+    let confirmed_proxy_required_path = output_path(&args.results_dir, TXT_DIR, "confirmed.txt");
+    let control_proxy_health_path = output_path(&args.results_dir, TXT_DIR, "control-health.txt");
+    let service_geo_report_path = output_path(&args.results_dir, TXT_DIR, "service-geo.txt");
+    let validation_report_path = output_path(&args.results_dir, TXT_DIR, "validation.txt");
+    let strict_sing_box_rule_set_path = output_path(&args.results_dir, JSON_DIR, "strict.json");
     let strict_sing_box_binary_rule_set_path =
-        args.results_dir.join("strict-sing-box-rule-set.srs");
-    let strict_sing_box_route_path = args.results_dir.join("strict-sing-box-route-snippet.json");
-    let strict_sing_box_binary_route_path = args
-        .results_dir
-        .join("strict-sing-box-binary-route-snippet.json");
-    let strict_xray_route_path = args.results_dir.join("strict-xray-routing-rule.json");
-    let strict_mihomo_rule_set_path = args.results_dir.join("strict-mihomo-rule-set.txt");
-    let strict_mihomo_binary_rule_set_path = args.results_dir.join("strict-mihomo-rule-set.mrs");
-    let strict_mihomo_provider_path = args.results_dir.join("strict-mihomo-rule-provider.yaml");
-    let strict_mihomo_binary_provider_path = args
-        .results_dir
-        .join("strict-mihomo-binary-rule-provider.yaml");
-    let strict_openwrt_pbr_path = args.results_dir.join("strict-openwrt-pbr-domains.txt");
-    let strict_openwrt_dnsmasq_path = args.results_dir.join("strict-openwrt-dnsmasq-ipset.conf");
-    let publication_report_path = args.results_dir.join("publication_report.txt");
+        output_path(&args.results_dir, BIN_DIR, "strict.srs");
+    let strict_sing_box_route_path = output_path(&args.results_dir, JSON_DIR, "strict-route.json");
+    let strict_sing_box_binary_route_path =
+        output_path(&args.results_dir, JSON_DIR, "strict-binary-route.json");
+    let strict_xray_route_path = output_path(&args.results_dir, JSON_DIR, "strict-xray.json");
+    let strict_mihomo_rule_set_path = output_path(&args.results_dir, TXT_DIR, "strict.txt");
+    let strict_mihomo_binary_rule_set_path = output_path(&args.results_dir, BIN_DIR, "strict.mrs");
+    let strict_mihomo_provider_path = output_path(&args.results_dir, YAML_DIR, "strict.yaml");
+    let strict_mihomo_binary_provider_path =
+        output_path(&args.results_dir, YAML_DIR, "strict-binary.yaml");
+    let strict_openwrt_pbr_path = output_path(&args.results_dir, TXT_DIR, "strict-openwrt.txt");
+    let strict_openwrt_dnsmasq_path =
+        output_path(&args.results_dir, TXT_DIR, "strict-dnsmasq.conf");
+    let publication_report_path = output_path(&args.results_dir, TXT_DIR, "publication.txt");
     let output_format = args.format.clone();
     let signatures_file = args.signatures.clone();
     let scan_policy = args.profile.as_scanner_policy();
@@ -853,62 +871,28 @@ async fn main() -> anyhow::Result<()> {
                 &strict_mihomo_binary_provider_path,
                 &strict_openwrt_pbr_path,
                 &strict_openwrt_dnsmasq_path,
-                &args.results_dir.join("known-service-bundle-rule-set.json"),
-                &args.results_dir.join("known-service-bundle-rule-set.srs"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-rule-set.txt"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-rule-set.mrs"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-rule-provider.yaml"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-mihomo-binary-rule-provider.yaml"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-binary-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-xray-routing-rule.json"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-openwrt-pbr-domains.txt"),
-                &args
-                    .results_dir
-                    .join("known-service-bundle-dnsmasq-ipset.conf"),
-                &args.results_dir.join("generic-apex-bypass-rule-set.json"),
-                &args.results_dir.join("generic-apex-bypass-rule-set.srs"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-binary-route-snippet.json"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-xray-routing-rule.json"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-rule-set.txt"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-rule-set.mrs"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-rule-provider.yaml"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-mihomo-binary-rule-provider.yaml"),
-                &args.results_dir.join("generic-apex-bypass-domains.txt"),
-                &args
-                    .results_dir
-                    .join("generic-apex-bypass-dnsmasq-ipset.conf"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle.json"),
+                &output_path(&args.results_dir, BIN_DIR, "bundle.srs"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle.txt"),
+                &output_path(&args.results_dir, BIN_DIR, "bundle.mrs"),
+                &output_path(&args.results_dir, YAML_DIR, "bundle.yaml"),
+                &output_path(&args.results_dir, YAML_DIR, "bundle-binary.yaml"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-binary-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-xray.json"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle-openwrt.txt"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle-dnsmasq.conf"),
+                &output_path(&args.results_dir, JSON_DIR, "apex.json"),
+                &output_path(&args.results_dir, BIN_DIR, "apex.srs"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-binary-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-xray.json"),
+                &output_path(&args.results_dir, TXT_DIR, "apex.txt"),
+                &output_path(&args.results_dir, BIN_DIR, "apex.mrs"),
+                &output_path(&args.results_dir, YAML_DIR, "apex.yaml"),
+                &output_path(&args.results_dir, YAML_DIR, "apex-binary.yaml"),
+                &output_path(&args.results_dir, TXT_DIR, "apex-openwrt.txt"),
+                &output_path(&args.results_dir, TXT_DIR, "apex-dnsmasq.conf"),
             ] {
                 if stale.exists() {
                     let _ = std::fs::remove_file(stale);

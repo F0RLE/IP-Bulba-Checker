@@ -1,8 +1,38 @@
-# Output Files and Export Profiles
+# Output Files
 
 > All outputs are written into `--results-dir`.
 >
-> If `--results-dir` is left at the default and an input file is provided, Bulbascan automatically derives `results_<input-stem>`.
+> Bulbascan now groups outputs by format:
+> - `txt/`
+> - `json/`
+> - `yaml/`
+> - `bin/`
+
+---
+
+## Main Idea
+
+The results directory is split by file type so the top level stays clean.
+
+Use these first:
+
+- `txt/publication.txt`
+- `txt/publish-strict.txt`
+- `txt/publish-review.txt`
+- `txt/publish-direct.txt`
+
+Use these for diagnostics:
+
+- `txt/comparison.txt`
+- `txt/service-geo.txt`
+- `txt/validation.txt`
+- `txt/hotspots.txt`
+
+Router and client exports live in:
+
+- `json/`
+- `yaml/`
+- `bin/`
 
 ---
 
@@ -10,104 +40,168 @@
 
 ### `simple` (default)
 
-Minimal outputs for basic selective-proxy usage.
+Minimal outputs for basic usage.
 
-| File | Contents |
+| Path | Contents |
 |---|---|
-| `blocked-domains.txt` | Blocked-domain list in the format selected by `--blocked-list-format` |
-| `blocked.log` | Detailed log for non-direct results |
-| `geosite.dat` | Generated geosite binary |
-| `ok.log` | Detailed log for direct results |
+| `txt/blocked.txt` | Blocked-domain list in the format selected by `--blocked-list-format` |
+| `txt/blocked.log` | Detailed log for non-direct results |
+| `bin/geosite.dat` | Generated geosite binary |
+| `txt/ok.log` | Detailed log for direct results during the run |
 
 Note:
 
-- if `simple` is used, `ok.log` is created during the scan and then removed at the end
-- the primary intended outputs in `simple` mode are the blocked-domain list and `geosite.dat`
+- in `simple`, `txt/ok.log` is created during the scan and then removed at the end
+- the main outputs are `txt/blocked.txt` and `bin/geosite.dat`
 
 ### `router`
 
-Adds router-oriented lists, native exports, and comparison reports.
+Adds routing lists, reports, and router/client exports.
 
 Everything in `simple`, plus:
 
-| File | Contents |
+| Path | Contents |
 |---|---|
-| `report.txt` | Human-readable report with routing, verdict, service, and confidence summaries |
-| `services_report.txt` | Service-grouped report with per-host details |
-| `proxy_required.txt` | Domains classified as `ProxyRequired` |
-| `direct_ok.txt` | Domains classified as `DirectOk` |
-| `manual_review.txt` | Domains classified as `ManualReview` |
-| `sing-box-rule-set.json` | sing-box source-format rule set |
-| `sing-box-rule-set.srs` | sing-box binary rule set when `sing-box` CLI is available locally |
-| `sing-box-route-snippet.json` | sing-box route snippet for source-format rule set |
-| `sing-box-binary-route-snippet.json` | sing-box route snippet for binary `.srs` rule set when compiled |
-| `mihomo-rule-set.txt` | Mihomo text domain rule set |
-| `mihomo-rule-set.mrs` | Mihomo binary rule set when `mihomo` / `clash-meta` CLI is available locally |
-| `mihomo-rule-provider.yaml` | Mihomo file provider snippet for text rule set |
-| `mihomo-binary-rule-provider.yaml` | Mihomo file provider snippet for binary `.mrs` rule set when compiled |
-| `xray-routing-rule.json` | Xray routing snippet using exact `full:` matches |
-| `openwrt-pbr-domains.txt` | OpenWrt PBR domain list |
-| `openwrt-dnsmasq-ipset.conf` | `dnsmasq-full` `ipset=` snippet |
-| `comparison_report.txt` | Local-vs-control comparison report, when `--control-proxy` is used |
-| `confirmed_proxy_required.txt` | Domains confirmed by dual-vantage comparison |
-| `control_proxy_health.txt` | Control-proxy preflight report |
-| `service_geo_report.txt` | Service-level geo summary from comparison results, including service publication tiers |
-| `publication_report.txt` | Publication-tier and hot/warm/cold rescan guidance for the current run |
-| `publish-*.txt` files | Tiered publication outputs: strict, review-only, direct-only |
-| `rescan-*.txt` files | Hot/warm/cold refresh queues for later incremental cycles |
-| `strict-*` files | Strict exports based only on confirmed dual-vantage results, including optional `.srs` and `.mrs` outputs when local toolchains are available |
-| `known-service-bundle-*` files | Minimal host bundles for known services |
-| `generic-apex-bypass-*` files | Apex-level exports for unmapped proxy-required domains |
+| `txt/report.txt` | Human-readable summary |
+| `txt/services.txt` | Service-grouped summary |
+| `txt/proxy.txt` | Domains classified as `ProxyRequired` |
+| `txt/direct.txt` | Domains classified as `DirectOk` |
+| `txt/review.txt` | Domains classified as `ManualReview` |
+| `txt/comparison.txt` | Local-vs-control comparison report |
+| `txt/confirmed.txt` | Domains confirmed by dual-vantage comparison |
+| `txt/control-health.txt` | Control-proxy preflight report |
+| `txt/service-geo.txt` | Service-level geo summary |
+| `txt/publication.txt` | Publication-tier and rescan guidance |
+| `txt/publish-*.txt` | Publication lists: strict, review, direct |
+| `txt/rescan-*.txt` | Hot/warm/cold refresh queues |
+| `json/` | sing-box and Xray JSON exports |
+| `yaml/` | Mihomo provider snippets |
+| `bin/` | `geosite.dat`, `.srs`, `.mrs` when local compilers are available |
 
 ### `full`
 
 Adds validation output on top of `router`.
 
-| File | Contents |
+| Path | Contents |
 |---|---|
-| `validation_report.txt` | Validation report against annotated expected outcomes |
-
-`validation_report.txt` is also the primary operator-facing place for publication guidance:
-
-- what is safe to publish now via `strict-*` exports
-- what should remain in review (`candidate_proxy_required`, `manual_review`, incomplete service bundles)
-- which service bundles are `strict_publishable`, `review_only`, or `direct_only`
-- which domains belong in the short-, medium-, and long-interval rescan queues
+| `txt/validation.txt` | Validation report against annotated expected outcomes |
 
 ---
 
-## Export Strategy
+## Folder Layout
 
-Bulbascan exports are intentionally conservative.
+### `txt/`
 
-- `proxy_required.txt` is the direct routing list from the local decision model
-- `confirmed_proxy_required.txt` is stricter and only exists when dual-vantage comparison runs
-- `strict-*` exports are built from confirmed comparison outcomes
-- `known-service-bundle-*` exports try to keep enough hosts to cover critical service roles
-- `generic-apex-bypass-*` exports cover the long tail of unmapped domains
+Human-facing reports, flat lists, logs, and text-based router files.
 
-This means:
+Common files:
 
-- `proxy_required.txt` is broader
-- `strict-*` is safer
-- `known-service-bundle-*` is smaller and service-aware
+- `blocked.txt`
+- `proxy.txt`
+- `direct.txt`
+- `review.txt`
+- `confirmed.txt`
+- `report.txt`
+- `services.txt`
+- `comparison.txt`
+- `control-health.txt`
+- `service-geo.txt`
+- `hotspots.txt`
+- `validation.txt`
+- `publication.txt`
+- `publish-strict.txt`
+- `publish-review.txt`
+- `publish-direct.txt`
+- `rescan-hot.txt`
+- `rescan-warm.txt`
+- `rescan-cold.txt`
+
+OpenWrt / dnsmasq text exports also live here:
+
+- `openwrt.txt`
+- `dnsmasq.conf`
+- `strict-openwrt.txt`
+- `strict-dnsmasq.conf`
+- `bundle-openwrt.txt`
+- `bundle-dnsmasq.conf`
+- `apex-openwrt.txt`
+- `apex-dnsmasq.conf`
+
+### `json/`
+
+JSON exports for sing-box and Xray.
+
+Main set:
+
+- `sing-box.json`
+- `sing-box-route.json`
+- `sing-box-binary-route.json`
+- `xray.json`
+
+Other scopes:
+
+- `strict*.json`
+- `bundle*.json`
+- `apex*.json`
+
+### `yaml/`
+
+Mihomo provider snippets.
+
+Main set:
+
+- `mihomo.yaml`
+- `mihomo-binary.yaml`
+
+Other scopes:
+
+- `strict*.yaml`
+- `bundle*.yaml`
+- `apex*.yaml`
+
+### `bin/`
+
+Binary artifacts.
+
+Main set:
+
+- `geosite.dat`
+- `sing-box.srs`
+- `mihomo.mrs`
+
+Other scopes:
+
+- `strict.*`
+- `bundle.*`
+- `apex.*`
 
 ---
 
-## Blocked List Formats
+## Output Strategy
 
-Controlled by `--blocked-list-format`.
+Use these tiers:
 
-| Format | Example | Use case |
-|---|---|---|
-| `plain` | `example.com` | Plain lists and generic router usage |
-| `geosite-source` | `full:example.com` | Geosite source lists and merge workflows |
+- `txt/publish-strict.txt`
+  Best publication-grade list.
+- `txt/publish-review.txt`
+  Keep for later refresh cycles and human review.
+- `txt/publish-direct.txt`
+  Stable direct-ok set.
+
+Use these diagnostics when something looks off:
+
+- `txt/comparison.txt`
+- `txt/service-geo.txt`
+- `txt/validation.txt`
+- `txt/hotspots.txt`
+
+Treat specialized `bundle*` and `apex*` exports as advanced compatibility outputs, not as the first files to open.
 
 ---
 
 ## State Directory
 
-When `--state-dir` is used, Bulbascan also maintains persistent state files:
+When `--state-dir` is used, Bulbascan maintains persistent state files:
 
 | File | Contents |
 |---|---|
@@ -118,4 +212,4 @@ When `--state-dir` is used, Bulbascan also maintains persistent state files:
 | `rescan-warm.txt` | Medium-interval refresh queue |
 | `rescan-cold.txt` | Long-interval refresh queue |
 
-These files are used to skip already-known domains on later runs unless `--refresh-known` is enabled.
+These state files stay flat because they are machine-maintained cache/state, not user-facing result bundles.
