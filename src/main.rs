@@ -937,11 +937,11 @@ async fn main() -> anyhow::Result<()> {
             &args.results_dir,
             Some(state_dir_ref),
         ) {
-                    Ok(()) => println!(
-                        "Publication artifacts saved to {} and rescan queues updated in {}.",
-                        publication_report_path.display(),
-                        state_dir.display()
-                    ),
+            Ok(()) => println!(
+                "Publication artifacts saved to {} and rescan queues updated in {}.",
+                publication_report_path.display(),
+                state_dir.display()
+            ),
             Err(e) => eprintln!("Error writing publication artifacts: {e}"),
         }
     }

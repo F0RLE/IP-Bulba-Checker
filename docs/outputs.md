@@ -221,3 +221,11 @@ The state directory maintains:
 | `rescan-cold.txt` | Long-interval refresh queue |
 
 These state files stay flat because they are machine-maintained cache/state, not user-facing result bundles.
+
+User-facing review outputs are separate and live under `results_dir/txt/`:
+
+| File | Contents |
+|---|---|
+| `txt/proxy.txt` | Current run's local proxy-required domains |
+| `txt/direct.txt` | Current run's local direct-ok domains |
+| `txt/review.txt` | Current run's local review set |

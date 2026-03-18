@@ -597,7 +597,7 @@ pub(crate) fn analyze_http_observation(
     final_url: &str,
     headers: &[(String, String)],
     body_raw: &[u8],
-    verbose: bool,
+    _verbose: bool,
 ) -> ScanResult {
     let mut best_signal: Option<Evidence> = None;
     let mut signals = Vec::new();
@@ -628,15 +628,6 @@ pub(crate) fn analyze_http_observation(
     if let Some(signal) = classify_redirect(final_url) {
         choose_better_signal(&mut best_signal, signal.clone());
         signals.push(signal);
-    }
-
-    let body_str = body_text.to_lowercase();
-
-    if verbose {
-        println!(
-            "--- DEBUG BODY [{domain}] ---\n{}\n------------------",
-            body_str.chars().take(500).collect::<String>()
-        );
     }
 
     // ── Quick Win #2 & #3: Body scan gating ──────────────────────

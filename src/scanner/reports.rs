@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
+const TXT_DIR: &str = "txt";
+
 use super::types::{
     ComparisonDecision, ComparisonResult, ProbeStatus, RoutingDecision, ScanResult,
     ServiceGeoSummary, Verdict, evidence_summary, network_summary, routing_decision_label,
@@ -556,6 +558,9 @@ pub(crate) fn write_routing_lists(results: &[ScanResult], output_dir: &Path) -> 
     manual_review.sort();
     manual_review.dedup();
 
+    let txt_dir = output_dir.join(TXT_DIR);
+    std::fs::create_dir_all(&txt_dir)?;
+
     let write_list = |path: &Path, items: &[String]| -> anyhow::Result<()> {
         let mut content = items.join("\n");
         if !content.is_empty() {
@@ -565,8 +570,8 @@ pub(crate) fn write_routing_lists(results: &[ScanResult], output_dir: &Path) -> 
         Ok(())
     };
 
-    write_list(&output_dir.join("proxy_required.txt"), &proxy_required)?;
-    write_list(&output_dir.join("direct_ok.txt"), &direct_ok)?;
-    write_list(&output_dir.join("manual_review.txt"), &manual_review)?;
+    write_list(&txt_dir.join("proxy.txt"), &proxy_required)?;
+    write_list(&txt_dir.join("direct.txt"), &direct_ok)?;
+    write_list(&txt_dir.join("review.txt"), &manual_review)?;
     Ok(())
 }
