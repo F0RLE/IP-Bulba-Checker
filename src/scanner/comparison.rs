@@ -38,6 +38,7 @@ fn resolver_health_note(detail: Option<&str>) -> Option<&str> {
 
 const MIN_CONFIDENT_CONTROL_DIRECT: u8 = 80;
 const MIN_CONFIDENT_CONTROL_BLOCKED: u8 = 80;
+const MIN_CONFIDENT_LOCAL_BLOCK_SIGNAL: u8 = 75;
 
 fn is_transport_noise_result(result: &ScanResult) -> bool {
     result
@@ -83,6 +84,38 @@ fn classify_needs_review_reason(local: &ScanResult, control: &ScanResult) -> Str
         routing_decision_label(local.routing_decision),
         routing_decision_label(control.routing_decision)
     )
+}
+
+fn local_supports_proxy_promotion(local: &ScanResult) -> bool {
+    if is_transport_noise_result(local) {
+        return false;
+    }
+
+    match local.verdict {
+        Verdict::GeoBlocked
+        | Verdict::WafBlocked
+        | Verdict::Captcha
+        | Verdict::RateLimited
+        | Verdict::ApiBlocked => true,
+        Verdict::NetworkBlocked | Verdict::TlsFailure | Verdict::Unreachable => {
+            local.confidence >= MIN_CONFIDENT_LOCAL_BLOCK_SIGNAL
+                && (local.network_evidence.path_dns.status == ProbeStatus::Ok
+                    || local.network_evidence.dns.status == ProbeStatus::Ok)
+                && (local.network_evidence.tcp_443.status != ProbeStatus::Ok
+                    || local.network_evidence.tls_443.status != ProbeStatus::Ok)
+        }
+        Verdict::UnexpectedStatus => {
+            local.confidence >= MIN_CONFIDENT_LOCAL_BLOCK_SIGNAL
+                && local.http_status.is_some_and(|status| status >= 400)
+        }
+        Verdict::Accessible => false,
+    }
+}
+
+fn local_supports_consistent_blocked(local: &ScanResult) -> bool {
+    local.routing_decision != RoutingDecision::DirectOk
+        && local_supports_proxy_promotion(local)
+        && local.confidence >= MIN_CONFIDENT_CONTROL_BLOCKED
 }
 
 fn control_supports_direct_promotion(control: &ScanResult) -> bool {
@@ -137,44 +170,70 @@ fn control_note(control: &ScanResult) -> Option<String> {
     None
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn compare_result_pair(local: &ScanResult, control: &ScanResult) -> ComparisonResult {
     let control_supports_direct = control_supports_direct_promotion(control);
     let control_blocked_is_weak = control_non_direct_is_weak(control);
+    let local_supports_promotion = local_supports_proxy_promotion(local);
 
-    let mut decision =
-        if local.routing_decision == RoutingDecision::ProxyRequired && control_supports_direct {
-            ComparisonDecision::ConfirmedProxyRequired
-        } else if matches!(
-            local.verdict,
-            Verdict::GeoBlocked
-                | Verdict::NetworkBlocked
-                | Verdict::TlsFailure
-                | Verdict::Unreachable
-                | Verdict::UnexpectedStatus
-                | Verdict::WafBlocked
-                | Verdict::Captcha
-        ) && control_supports_direct
-        {
-            // "Smart WAF/Captcha Promotion": If local is WAF/Captcha but control proxy is DirectOk,
-            // it means the site is selectively blocking the local IP/geo, not down globally.
-            ComparisonDecision::CandidateProxyRequired
-        } else if local.routing_decision == RoutingDecision::DirectOk
-            && control.routing_decision == RoutingDecision::DirectOk
-        {
-            ComparisonDecision::ConsistentDirect
-        } else if local.routing_decision != RoutingDecision::DirectOk
-            && control.routing_decision != RoutingDecision::DirectOk
-            && !control_blocked_is_weak
-        {
-            ComparisonDecision::ConsistentBlocked
-        } else {
-            ComparisonDecision::NeedsReview
-        };
+    let mut decision = if local.routing_decision == RoutingDecision::ProxyRequired
+        && control_supports_direct
+        && local_supports_promotion
+    {
+        ComparisonDecision::ConfirmedProxyRequired
+    } else if matches!(
+        local.verdict,
+        Verdict::GeoBlocked
+            | Verdict::NetworkBlocked
+            | Verdict::TlsFailure
+            | Verdict::Unreachable
+            | Verdict::UnexpectedStatus
+            | Verdict::WafBlocked
+            | Verdict::Captcha
+    ) && control_supports_direct
+        && local_supports_promotion
+    {
+        // "Smart WAF/Captcha Promotion": If local is WAF/Captcha but control proxy is DirectOk,
+        // it means the site is selectively blocking the local IP/geo, not down globally.
+        ComparisonDecision::CandidateProxyRequired
+    } else if local.routing_decision == RoutingDecision::DirectOk
+        && control.routing_decision == RoutingDecision::DirectOk
+    {
+        ComparisonDecision::ConsistentDirect
+    } else if local_supports_consistent_blocked(local)
+        && control.routing_decision != RoutingDecision::DirectOk
+        && !control_blocked_is_weak
+    {
+        ComparisonDecision::ConsistentBlocked
+    } else {
+        ComparisonDecision::NeedsReview
+    };
 
     let mut network_notes =
         compare_network_evidence(&local.network_evidence, &control.network_evidence);
     if let Some(note) = control_note(control) {
         network_notes.push(note);
+    }
+    if control_supports_direct
+        && !local_supports_promotion
+        && local.routing_decision != RoutingDecision::DirectOk
+    {
+        network_notes.push(format!(
+            "local signal is too weak for direct-vs-proxy promotion: verdict={} confidence={}",
+            verdict_label(local.verdict),
+            local.confidence
+        ));
+    }
+    if control.routing_decision != RoutingDecision::DirectOk
+        && !control_blocked_is_weak
+        && !local_supports_consistent_blocked(local)
+        && local.routing_decision != RoutingDecision::DirectOk
+    {
+        network_notes.push(format!(
+            "local side is too weak to confirm a shared blocked outcome: verdict={} confidence={}",
+            verdict_label(local.verdict),
+            local.confidence
+        ));
     }
 
     let mut local_verdict_confidence = local.confidence;

@@ -22,15 +22,14 @@
 
 - **Dual-vantage confidence improvements**
   - Usefulness: 8/10
-  - Status: in progress
+  - Status: completed
   - What it gives: cleaner `ConfirmedProxyRequired` vs `CandidateProxyRequired` outcomes and less noise in publication decisions.
   - Implemented:
-    - `NeedsReview` already distinguishes control-path ambiguity from transport ambiguity
-  - Remaining:
-    - tighten promotion rules for `ConfirmedProxyRequired` vs `CandidateProxyRequired`
-    - reduce false `ConsistentBlocked` from weak or same-region control proxies
-    - improve reasoning when control is direct-ok but local is challenged or blocked
-    - suppress remaining technical noise such as `worker error`
+    - `NeedsReview` distinguishes control-path ambiguity from transport ambiguity
+    - promotion rules now require stronger local evidence before direct-vs-proxy escalation
+    - weak local transport noise no longer promotes into `CandidateProxyRequired`
+    - weak local non-direct results no longer force `ConsistentBlocked` against a strong blocked control path
+    - comparison notes now explain when the local or control side is too weak for confident publication decisions
 
 - **Browser verification as a confirmation layer**
   - Usefulness: 7/10
