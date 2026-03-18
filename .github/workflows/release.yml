@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
@@ -14,32 +11,79 @@ on:
 permissions:
   contents: write
 
-env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-
 jobs:
-  create-release:
+  prepare-release:
     name: Prepare Release
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.prepare.outputs.release_tag }}
+      notes_path: ${{ steps.prepare.outputs.notes_path }}
+      has_notes: ${{ steps.prepare.outputs.has_notes }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/checkout@v5
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          name: Release ${{ env.RELEASE_TAG }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          make_latest: true
-          allowUpdates: true
+          fetch-depth: 0
+
+      - name: Validate release source and create tag
+        id: prepare
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Release workflow must be started from main." >&2
+            exit 1
+          fi
+
+          TAG_INPUT="${{ inputs.tag }}"
+          if [[ "$TAG_INPUT" != v* ]]; then
+            RELEASE_TAG="v$TAG_INPUT"
+          else
+            RELEASE_TAG="$TAG_INPUT"
+          fi
+
+          NOTES_PATH="docs/releases/${RELEASE_TAG}.md"
+          if [ -f "$NOTES_PATH" ]; then
+            HAS_NOTES=true
+          else
+            HAS_NOTES=false
+          fi
+
+          git fetch origin main --tags
+          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag $RELEASE_TAG already exists, reusing it."
+          else
+            git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "notes_path=$NOTES_PATH" >> "$GITHUB_OUTPUT"
+          echo "has_notes=$HAS_NOTES" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+          NOTES_PATH: ${{ steps.prepare.outputs.notes_path }}
+          HAS_NOTES: ${{ steps.prepare.outputs.has_notes }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$HAS_NOTES" = "true" ]; then
+              gh release edit "$RELEASE_TAG" --title "Release $RELEASE_TAG" --notes-file "$NOTES_PATH" --latest
+            else
+              gh release edit "$RELEASE_TAG" --title "Release $RELEASE_TAG" --notes "" --latest
+            fi
+          else
+            if [ "$HAS_NOTES" = "true" ]; then
+              gh release create "$RELEASE_TAG" --title "Release $RELEASE_TAG" --notes-file "$NOTES_PATH" --latest
+            else
+              gh release create "$RELEASE_TAG" --title "Release $RELEASE_TAG" --generate-notes --latest
+            fi
+          fi
 
   build:
     name: Build ${{ matrix.target }}
-    needs: create-release
+    needs: prepare-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -71,7 +115,7 @@ jobs:
             asset_name: bulbascan-windows-x86.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -92,14 +136,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib
-          
+
       - name: Install Dependencies (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
           choco install cmake llvm -y
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
-          
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -128,11 +172,8 @@ jobs:
         run: Move-Item -Path "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" -Destination "${{ matrix.asset_name }}"
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: ${{ matrix.asset_name }}
-          fail_on_unmatched_files: true
-          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" "${{ matrix.asset_name }}" --clobber

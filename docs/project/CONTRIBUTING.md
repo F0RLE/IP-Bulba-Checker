@@ -116,6 +116,7 @@ Expected flow:
 4. Periodically promote `nightly` into `dev`
 5. Test and stabilize in `dev`
 6. Merge `dev` into `main` for release
+7. Run the release workflow from `main`; do not create release tags manually from `dev` or `nightly`
 
 Guidelines:
 
@@ -124,6 +125,7 @@ Guidelines:
 - Changes to workflow, CI, contributor process, or shared agent instructions should go through a dedicated PR into `nightly`
 - Direct commits without PR are only acceptable for local-only changes that do not affect other contributors
 - Do not use a dedicated release branch unless the workflow changes again
+- Do not publish release tags manually from `dev` or `nightly`
 - If a roadmap item is completed, update `docs/roadmap.md` in the same PR when appropriate
 
 ---
