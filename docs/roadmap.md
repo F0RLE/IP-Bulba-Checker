@@ -2,175 +2,110 @@
 
 ---
 
-## v0.1.3 — Active Development
+## Current Focus — v0.1.4 Practical Productization
 
-> Primary goal: improve selective-proxy accuracy for country-level blocking detection.
->
-> Bulbascan is not trying to become a full browser-bypass platform. The priority is reliable classification:
-> `DirectOk` vs `ProxyRequired` vs `ManualReview`, with fewer false positives from WAFs, captchas, DNS poisoning, and transport-level censorship.
+> Primary goal: reduce operator friction, make outputs easier to consume, and turn the current scanner into a cleaner repeatable workflow.
 
-## Core Accuracy
+## Active Priorities
 
-- **DNS-level block detection**
-  - Usefulness: 9/10
-  - Status: completed
-  - What it gives: stronger first-class DNS evidence for poisoned answers, resolver failures, and mismatch confirmation.
-  - Implemented:
-    - system DNS vs DoH comparison
-    - resolver failure and health classification
-    - DNS mismatch confirmation through failed direct TCP/TLS probes
-
-- **Dual-vantage confidence improvements**
+- **Output surface reduction**
   - Usefulness: 8/10
-  - Status: completed
-  - What it gives: cleaner `ConfirmedProxyRequired` vs `CandidateProxyRequired` outcomes and less noise in publication decisions.
-  - Implemented:
-    - `NeedsReview` distinguishes control-path ambiguity from transport ambiguity
-    - promotion rules now require stronger local evidence before direct-vs-proxy escalation
-    - weak local transport noise no longer promotes into `CandidateProxyRequired`
-    - weak local non-direct results no longer force `ConsistentBlocked` against a strong blocked control path
-    - comparison notes now explain when the local or control side is too weak for confident publication decisions
+  - Status: in progress
+  - What it gives: fewer default artifacts, less duplication, and a smaller operator-facing result surface.
+  - Remaining:
+    - decide which source and binary exports should coexist by default
+    - move advanced export families behind clearer profile or flag boundaries
+    - remove or hide compatibility outputs that are not part of the main operator path
 
-- **Browser verification as a confirmation layer**
+- **Known-dataset benchmarking**
+  - Usefulness: 8/10
+  - Status: in progress
+  - What it gives: a stable way to compare classification quality between versions instead of relying only on ad hoc scans.
+  - Remaining:
+    - define small representative benchmark datasets
+    - record expected classification outcomes for regression testing
+    - add repeatable quality checks for accuracy-sensitive changes
+
+- **State lifecycle cleanup**
   - Usefulness: 7/10
-  - Status: completed
-  - What it gives: a secondary confirmation layer for challenge-heavy and script-dependent targets without turning the browser path into the main detector.
-  - Implemented:
-    - cleaner challenge-page labeling for captcha and WAF interstitials
-    - browser budget for bulk runs
-    - challenge-family reuse to avoid repeated browser confirmation
-    - more precise handling for headers such as `cf-mitigated: challenge` and `x-amzn-waf-action=captcha|challenge`
+  - Status: in progress
+  - What it gives: less stale cache buildup and clearer long-term scan state behavior.
+  - Remaining:
+    - define retention and cleanup rules for state and queue files
+    - separate long-lived state from per-run artifacts more explicitly
+    - document safe cleanup paths for operators
 
-- **Service-profile coverage**
-  - Usefulness: 8/10
-  - Status: completed
-  - What it gives: stronger service-level decisions by covering critical login, API, browser, and console surfaces.
-  - Implemented:
-    - multi-role hosts in `profiles.toml`
-    - current official aliases such as `platform.claude.com`
-    - richer login and browser probe paths
-    - wider API- and auth-adjacent host coverage such as `developers.tiktok.com` and `connect.deezer.com`
+- **Preset-based export modes**
+  - Usefulness: 7/10
+  - Status: in progress
+  - What it gives: clearer ready-to-use outputs for `sing-box`, `mihomo`, `OpenWrt`, and generic review workflows.
+  - Remaining:
+    - define opinionated presets for the main consumer ecosystems
+    - make the default export profile easier to understand without reading all docs
+    - document which preset maps to which deployment style
 
-## Performance & Scale
+- **Feed packaging and distribution**
+  - Usefulness: 7/10
+  - Status: in progress
+  - What it gives: a cleaner path from local scans to reusable update bundles and published artifacts.
+  - Remaining:
+    - define feed bundle structure and metadata
+    - define versioning for publishable outputs
+    - separate operator-local results from distributable feed artifacts
 
-- **Concurrent Domain Ingestion**
-  - Usefulness: 6/10
-  - Status: completed
-  - What it gives: lower startup latency on large or multi-file domain lists.
-  - Implemented:
-    - concurrent loading for plain-text input files
-    - deterministic merge in source order
-    - streaming line-by-line ingestion for proxy lists
+- **Release validation matrix**
+  - Usefulness: 7/10
+  - Status: in progress
+  - What it gives: more reliable releases across profiles, platforms, and common operator setups.
+  - Remaining:
+    - add smoke validation for `safe` and `aggressive` flows
+    - validate common export paths and generated artifacts
+    - make release confidence less dependent on manual spot checks
 
-- **Moving Average Speed Smoothing**
-  - Usefulness: 5/10
-  - Status: completed
-  - What it gives: more stable progress speed and ETA during large scans.
-  - Implemented:
-    - 3-second moving-window throughput smoothing
+---
 
-## Network & Transport Research
+## Completed in v0.1.3
+
+> v0.1.3 delivered the core selective-proxy classification pipeline and the first practical operator workflow.
+>
+> Full release summary: [releases/v0.1.3.md](releases/v0.1.3.md)
+
+- **Core accuracy**
+  - DNS-level block detection
+  - dual-vantage confidence cleanup
+  - browser confirmation as a bounded secondary layer
+  - broader service-profile coverage
+
+- **Performance and scale**
+  - concurrent domain ingestion
+  - moving average ETA smoothing
+
+- **Exports and operator workflow**
+  - direct `.srs` and Mihomo `.mrs` generation
+  - global `bulbascan.toml` configuration
+  - enhanced scan reports and publication guidance
+  - incremental publishing workflow
+  - cross-platform runtime hardening
+  - output layout simplification
+
+---
+
+## Parking Lot
+
+> These ideas are intentionally not part of the active roadmap. They are either research-heavy, low-ROI, or only useful after a future product shift.
 
 - **ECH (Encrypted Client Hello) Support**
   - Usefulness: 4/10
-  - Status: in progress
-  - What it gives: an additional research signal for targets and CDNs that actually publish usable ECH configuration.
-  - Remaining:
-    - add optional ECH probing
-    - keep it detection-oriented rather than treating it as a universal bypass path
+  - Why parked: useful as a research signal, but not a strong immediate product win for the current classification pipeline.
 
 - **XHTTP & HTTP/3 Probing**
   - Usefulness: 4/10
-  - Status: in progress
-  - What it gives: optional secondary transport evidence for domains that stay ambiguous over the default path.
-  - Remaining:
-    - evaluate Xray XHTTP as a secondary transport
-    - evaluate HTTP/3/QUIC probing
-    - keep this only if it materially improves classification quality
-
-## Output & Export Formats
-
-- **Direct `.srs` (sing-box Rule Set v4) Compilation**
-  - Usefulness: 7/10
-  - Status: completed
-  - What it gives: lower-memory sing-box deployments through direct binary rule-set output.
-  - Implemented:
-    - `.srs` generation through local `sing-box` CLI when available
-    - matching binary route snippets
-    - JSON source rule sets kept as the portable baseline
-
-- **Mihomo Rule-Set (`.mrs`) Export**
-  - Usefulness: 6/10
-  - Status: completed
-  - What it gives: native output for Mihomo / Clash.Meta consumers.
-  - Implemented:
-    - Mihomo text rule sets and provider snippets by default
-    - optional `.mrs` generation through local `mihomo` / `clash-meta` CLI
-    - binary provider snippets when the compiler is available
-
-## Tooling & Operator UX
-
-- **Global Configuration (`bulbascan.toml`)**
-  - Usefulness: 7/10
-  - Status: completed
-  - What it gives: persistent operator defaults without weakening CLI overrides.
-  - Implemented:
-    - optional `bulbascan.toml` auto-loading from the working directory
-    - explicit `--config` override and `--no-config` escape hatch
-    - precedence: `CLI/env > config file > built-in defaults`
-    - persisted defaults for proxies, timeouts, output profile, browser path, results directory, and comparison settings
-
-- **Enhanced Scan Reports**
-  - Usefulness: 8/10
-  - Status: completed
-  - What it gives: clearer operator-facing outputs for publication and review decisions.
-  - Implemented:
-    - confidence summaries
-    - `ManualReview` hotspot reporting by root cause with operator guidance
-    - publication guidance in `txt/validation.txt`
-    - service publication tiers in `txt/service-geo.txt`
-
-- **Incremental Publishing Workflow**
-  - Usefulness: 8/10
-  - Status: completed
-  - What it gives: staged publish artifacts and refresh queues instead of treating every scan as a full reset.
-  - Implemented:
-    - publication tiers (`publish-strict`, `publish-review`, `publish-direct`)
-    - operator-facing `txt/publication.txt`
-    - hot / warm / cold rescan queue files
-    - queue persistence into `--state-dir` for later cycles
-
-- **Cross-platform runtime hardening**
-  - Usefulness: 6/10
-  - Status: completed
-  - What it gives: more predictable behavior across Windows, macOS, and Linux.
-  - Implemented:
-    - browser auto-detection through env overrides, `PATH`, and common install locations
-    - plain-text progress fallback when ANSI / VT support is unavailable
-    - more consistent browser-assisted confirmation across supported desktop platforms
-
-- **Output layout simplification**
-  - Usefulness: 7/10
-  - Status: completed
-  - What it gives: a cleaner `results_dir` with grouped outputs and shorter file names.
-  - Implemented:
-    - outputs are grouped into `txt/`, `json/`, `yaml/`, and `bin/`
-    - human-facing reports and lists use shorter names such as `comparison.txt`, `service-geo.txt`, and `publication.txt`
-    - router and client exports keep the same logical coverage but no longer flood the top level of the results directory
-
-## Experimental
-
-- **AI Labyrinth / visibility-safe interaction**
-  - Usefulness: 3/10
-  - Status: in progress
-  - What it gives: safer browser automation if the confirmation layer becomes more interactive.
-  - Remaining:
-    - avoid hidden honeypot links and decoy elements
-    - keep the scope limited to browser confirmation flows
+  - Why parked: transport-research heavy and only worth reviving if real ambiguous cases clearly demand it.
 
 - **Daemon / REST API Mode**
   - Usefulness: 4/10
-  - Status: in progress
-  - What it gives: service-style integration for other tools once the detection pipeline is stable enough.
-  - Remaining:
-    - only revisit this after classification accuracy work is largely closed
+  - Why parked: only makes sense after the current operator workflow hardens into a stable service contract.
+
+- **AI Labyrinth / visibility-safe interaction**
+  - Usefulness: 3/10
+  - Why parked: unnecessary unless browser confirmation becomes materially more interactive than it is today.
