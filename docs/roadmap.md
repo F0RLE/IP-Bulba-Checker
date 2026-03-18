@@ -12,80 +12,109 @@
 ## Core Accuracy
 
 - **DNS-level block detection**
+  - Usefulness: 9/10
   - Status: completed
-  - Compare system DNS vs DoH answers to detect NXDOMAIN injection, resolver failures, and suspicious poisoned-answer mismatches.
-  - Record DNS disagreement as first-class evidence in scan results and comparison reports.
-  - Distinguish stronger cases such as "local DNS manipulation suspected", "resolver unhealthy", and "DNS mismatch confirmed by failed direct tcp/tls".
+  - What it gives: stronger first-class DNS evidence for poisoned answers, resolver failures, and mismatch confirmation.
+  - Implemented:
+    - system DNS vs DoH comparison
+    - resolver failure and health classification
+    - DNS mismatch confirmation through failed direct TCP/TLS probes
 
 - **Dual-vantage confidence improvements**
+  - Usefulness: 8/10
   - Status: in progress
-  - Tighten `ConfirmedProxyRequired` vs `CandidateProxyRequired` promotion rules.
-  - Reduce false `ConsistentBlocked` outcomes caused by weak or same-region control proxies.
-  - Surface clearer reasoning when the control path proves direct access but the local path is challenged or blocked.
-  - Add a second pass for noisy `NeedsReview` comparison rows:
-    - suppress technical noise like `worker error`
-    - distinguish control-healthy ambiguity from transport-failure ambiguity
-    - emit cleaner top-level buckets for publication decisions
-  - Current scope: `NeedsReview` now distinguishes control-path ambiguity from transport ambiguity, but broader comparison cleanup is still needed after the latest bulk scan.
+  - What it gives: cleaner `ConfirmedProxyRequired` vs `CandidateProxyRequired` outcomes and less noise in publication decisions.
+  - Implemented:
+    - `NeedsReview` already distinguishes control-path ambiguity from transport ambiguity
+  - Remaining:
+    - tighten promotion rules for `ConfirmedProxyRequired` vs `CandidateProxyRequired`
+    - reduce false `ConsistentBlocked` from weak or same-region control proxies
+    - improve reasoning when control is direct-ok but local is challenged or blocked
+    - suppress remaining technical noise such as `worker error`
 
 - **Browser verification as a confirmation layer**
+  - Usefulness: 7/10
   - Status: completed
-  - Keep browser verification focused on confirming challenge pages, geo walls, and selective WAF behavior.
-  - Avoid promoting the browser path into the primary detector when HTTP/DNS/TLS evidence is already sufficient.
-  - Improve challenge-page labeling so captchas and WAF interstitials produce cleaner `ManualReview` vs `ProxyRequired` outcomes.
-  - Add a browser budget for bulk runs so large scans do not spend disproportionate time on long-tail challenge pages.
-  - Prefer challenge-family clustering over repeated browser confirmation for obviously similar host fleets.
-  - Current scope: bulk runs now cap total browser confirmations and per-domain browser paths, known challenge headers such as `cf-mitigated: challenge` and `x-amzn-waf-action=captcha|challenge` are labeled more precisely, and repeated browser confirmation is skipped for challenge families already confirmed earlier in the same scan.
+  - What it gives: a secondary confirmation layer for challenge-heavy and script-dependent targets without turning the browser path into the main detector.
+  - Implemented:
+    - cleaner challenge-page labeling for captcha and WAF interstitials
+    - browser budget for bulk runs
+    - challenge-family reuse to avoid repeated browser confirmation
+    - more precise handling for headers such as `cf-mitigated: challenge` and `x-amzn-waf-action=captcha|challenge`
 
 - **Service-profile coverage**
+  - Usefulness: 8/10
   - Status: completed
-  - Expand `profiles.toml` so major blocked services expose enough critical-role coverage for reliable service-level decisions.
-  - Improve per-service reasoning when only partial host coverage is observed.
-  - Current scope: service coverage now includes multi-role hosts, current official console aliases such as `platform.claude.com`, richer probe paths for login and browser entrypoints, and additional host coverage for API- and auth-adjacent surfaces such as `developers.tiktok.com` and `connect.deezer.com`.
+  - What it gives: stronger service-level decisions by covering critical login, API, browser, and console surfaces.
+  - Implemented:
+    - multi-role hosts in `profiles.toml`
+    - current official aliases such as `platform.claude.com`
+    - richer login and browser probe paths
+    - wider API- and auth-adjacent host coverage such as `developers.tiktok.com` and `connect.deezer.com`
 
 ## Performance & Scale
 
 - **Concurrent Domain Ingestion**
+  - Usefulness: 6/10
   - Status: completed
-  - Parallelize large input file loading to reduce startup latency on community blocklists.
-  - Current scope: plain-text input files are now loaded concurrently and merged deterministically in source order, while proxy lists use streaming line-by-line ingestion instead of whole-file reads.
+  - What it gives: lower startup latency on large or multi-file domain lists.
+  - Implemented:
+    - concurrent loading for plain-text input files
+    - deterministic merge in source order
+    - streaming line-by-line ingestion for proxy lists
 
 - **Moving Average Speed Smoothing**
+  - Usefulness: 5/10
   - Status: completed
-  - Progress bar speed now uses a 3-second moving window for more stable throughput and ETA metrics.
+  - What it gives: more stable progress speed and ETA during large scans.
+  - Implemented:
+    - 3-second moving-window throughput smoothing
 
 ## Network & Transport Research
 
 - **ECH (Encrypted Client Hello) Support**
+  - Usefulness: 4/10
   - Status: in progress
-  - Add optional ECH probing for targets and CDNs that publish usable ECH configuration.
-  - Treat ECH as an additional research/detection signal, not as a universal bypass path.
+  - What it gives: an additional research signal for targets and CDNs that actually publish usable ECH configuration.
+  - Remaining:
+    - add optional ECH probing
+    - keep it detection-oriented rather than treating it as a universal bypass path
 
 - **XHTTP & HTTP/3 Probing**
+  - Usefulness: 4/10
   - Status: in progress
-  - Evaluate Xray XHTTP and HTTP/3/QUIC as secondary transports for domains that are ambiguous over the default path.
-  - Only keep this if it materially improves classification quality for selective proxy lists.
+  - What it gives: optional secondary transport evidence for domains that stay ambiguous over the default path.
+  - Remaining:
+    - evaluate Xray XHTTP as a secondary transport
+    - evaluate HTTP/3/QUIC probing
+    - keep this only if it materially improves classification quality
 
 ## Output & Export Formats
 
 - **Direct `.srs` (sing-box Rule Set v4) Compilation**
+  - Usefulness: 7/10
   - Status: completed
-  - Generate binary sing-box rule sets directly for lower-memory router deployments.
-  - Current scope: Bulbascan now writes `.srs` rule sets and matching binary route snippets when a local `sing-box` CLI is available, while keeping source-format JSON rule sets as the portable baseline output.
+  - What it gives: lower-memory sing-box deployments through direct binary rule-set output.
+  - Implemented:
+    - `.srs` generation through local `sing-box` CLI when available
+    - matching binary route snippets
+    - JSON source rule sets kept as the portable baseline
 
 - **Mihomo Rule-Set (`.mrs`) Export**
+  - Usefulness: 6/10
   - Status: completed
-  - Add export support for current Mihomo / Clash rule-set consumers.
-  - Current scope: Bulbascan now writes Mihomo text rule sets and provider snippets by default, and compiles optional `.mrs` rule sets plus binary provider snippets when a local `mihomo` / `clash-meta` CLI is available.
-
-- **GeoIP `geoip.dat` Generation**
-  - Status: in progress
-  - Aggregate IP-level evidence into GeoIP-oriented outputs where that signal is stable enough to trust.
+  - What it gives: native output for Mihomo / Clash.Meta consumers.
+  - Implemented:
+    - Mihomo text rule sets and provider snippets by default
+    - optional `.mrs` generation through local `mihomo` / `clash-meta` CLI
+    - binary provider snippets when the compiler is available
 
 ## Tooling & Operator UX
 
 - **Global Configuration (`bulbascan.toml`)**
+  - Usefulness: 7/10
   - Status: completed
+  - What it gives: persistent operator defaults without weakening CLI overrides.
   - Implemented:
     - optional `bulbascan.toml` auto-loading from the working directory
     - explicit `--config` override and `--no-config` escape hatch
@@ -93,16 +122,19 @@
     - persisted defaults for proxies, timeouts, output profile, browser path, results directory, and comparison settings
 
 - **Enhanced Scan Reports**
+  - Usefulness: 8/10
   - Status: completed
-  - Add confidence summaries, better explanation of `ManualReview`, and clearer per-service output for non-expert operators.
-  - Reports now include:
+  - What it gives: clearer operator-facing outputs for publication and review decisions.
+  - Implemented:
     - confidence summaries
     - `ManualReview` hotspot reporting by root cause with operator guidance
     - publication guidance in `validation_report.txt`
     - service publication tiers in `service_geo_report.txt`
 
 - **Incremental Publishing Workflow**
+  - Usefulness: 8/10
   - Status: completed
+  - What it gives: staged publish artifacts and refresh queues instead of treating every scan as a full reset.
   - Implemented:
     - publication tiers (`publish-strict`, `publish-review`, `publish-direct`)
     - operator-facing `publication_report.txt`
@@ -110,28 +142,27 @@
     - queue persistence into `--state-dir` for later cycles
 
 - **Cross-platform runtime hardening**
+  - Usefulness: 6/10
   - Status: completed
-  - Improve browser auto-detection so Windows, macOS, and Linux builds can find Chrome / Chromium / Edge more reliably.
-  - Reduce terminal/UI variance by falling back cleanly when ANSI or VT sequences are not supported.
-  - Keep browser-assisted confirmation behavior as consistent as practical across supported desktop platforms.
-  - Current scope: browser auto-detection now checks env overrides, `PATH`, and common install locations across Windows, macOS, and Linux, and the progress UI falls back to plain text when ANSI / VT support is unavailable.
+  - What it gives: more predictable behavior across Windows, macOS, and Linux.
+  - Implemented:
+    - browser auto-detection through env overrides, `PATH`, and common install locations
+    - plain-text progress fallback when ANSI / VT support is unavailable
+    - more consistent browser-assisted confirmation across supported desktop platforms
 
 ## Experimental
 
 - **AI Labyrinth / visibility-safe interaction**
+  - Usefulness: 3/10
   - Status: in progress
-  - If interactive browser automation expands, ensure the scanner never interacts with invisible honeypot links or decoy elements.
-  - Keep this scoped to browser confirmation flows only.
-
-- **CapSolver / 2Captcha hooks**
-  - Status: in progress
-  - Explore only if challenge-solving becomes necessary for materially better classification.
-  - Do not make paid captcha-solving a hard dependency of normal scanning.
-
-- **HTTP-level IP spoofing**
-  - Status: in progress
-  - Experimental only. Keep disabled by default unless it produces measurable classification value without increasing false positives.
+  - What it gives: safer browser automation if the confirmation layer becomes more interactive.
+  - Remaining:
+    - avoid hidden honeypot links and decoy elements
+    - keep the scope limited to browser confirmation flows
 
 - **Daemon / REST API Mode**
+  - Usefulness: 4/10
   - Status: in progress
-  - Lower priority than classification accuracy. Consider only after the detection pipeline stabilizes.
+  - What it gives: service-style integration for other tools once the detection pipeline is stable enough.
+  - Remaining:
+    - only revisit this after classification accuracy work is largely closed
