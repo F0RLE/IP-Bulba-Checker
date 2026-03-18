@@ -135,7 +135,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake clang libclang-dev pkg-config gcc-multilib g++-multilib nasm
+          sudo apt-get install -y cmake clang libclang-dev llvm-dev pkg-config gcc-multilib g++-multilib nasm
+          echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> $GITHUB_ENV
 
       - name: Install Dependencies (Windows)
         if: runner.os == 'Windows'
@@ -179,7 +180,19 @@ jobs:
           }
 
           $clangPath = if ($clang.Source) { $clang.Source } else { $clang.FullName }
-          $libclangDir = Split-Path $clangPath -Parent
+          $clangDir = Split-Path $clangPath -Parent
+          $libclang = Get-ChildItem -Path $clangDir -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $libclang) {
+            $libclang = Get-ChildItem -Path @(
+              "$env:ProgramFiles\\LLVM\\bin",
+              "$env:ProgramFiles(x86)\\LLVM\\bin"
+            ) -Filter libclang.dll -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $libclang) {
+            throw "libclang.dll not found on the runner"
+          }
+
+          $libclangDir = Split-Path $libclang.FullName -Parent
           "LIBCLANG_PATH=$libclangDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Dependencies (macOS)
@@ -195,12 +208,11 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build Release
-        env:
-          LIBCLANG_PATH: /usr/lib/llvm-14/lib
-          BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: --sysroot=/usr/aarch64-linux-gnu
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export LIBCLANG_PATH=/usr/lib/llvm-10/lib
+            export BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu
             cross build --release --locked --target "${{ matrix.target }}"
           else
             cargo build --release --locked --target "${{ matrix.target }}"
