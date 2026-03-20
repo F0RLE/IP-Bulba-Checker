@@ -1,0 +1,1165 @@
+//! Bulbascan is a selective-proxy scanner for router-oriented block analysis.
+//! It classifies geo and WAF behavior, then turns observations into routing
+//! decisions that help proxy only the domains that need it.
+
+#![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+
+use clap::{CommandFactory, FromArgMatches};
+use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal;
+use tokio::task::JoinSet;
+
+mod cli;
+mod config;
+mod geosite;
+mod pipeline;
+mod progress;
+mod publication;
+mod radar;
+mod router_exports;
+mod scanner;
+mod selftest;
+mod service_profiles;
+mod signatures;
+mod state;
+mod validation;
+mod xray;
+
+use cli::{Args, ExportProfileArg, default_results_dir_for_input, runtime_data_root_dir};
+use pipeline::{
+    blocked_domains_from_comparisons, blocked_domains_from_results, filter_pending_domains,
+    load_annotated_domains_from_file, load_domains_from_json_file, load_trimmed_lines_from_file,
+    merge_blocked_domains_into_list, write_blocked_domain_list,
+};
+
+// ── Worker count persistence ───────────────────────────────────────────────
+// Saved in a user config location; overridden if --concurrency is explicit.
+const WORKERS_FILE: &str = ".bulbascan_workers";
+const DEFAULT_WORKERS: usize = 50;
+const TXT_DIR: &str = "txt";
+const JSON_DIR: &str = "json";
+const YAML_DIR: &str = "yaml";
+const BIN_DIR: &str = "bin";
+
+fn worker_state_path() -> std::path::PathBuf {
+    let base_dir = if cfg!(windows) {
+        std::env::var_os("APPDATA").map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+    } else if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        std::path::PathBuf::from(xdg)
+    } else if let Some(home) = std::env::var_os("HOME") {
+        std::path::PathBuf::from(home).join(".config")
+    } else {
+        std::env::temp_dir()
+    };
+
+    base_dir.join("Bulbascan").join("workers.txt")
+}
+
+fn load_workers(path: &std::path::Path) -> Option<usize> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|&n: &usize| (1..=1000).contains(&n))
+}
+
+fn save_workers(path: &std::path::Path, n: usize) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, n.to_string());
+}
+
+fn output_path(results_dir: &std::path::Path, bucket: &str, file: &str) -> std::path::PathBuf {
+    results_dir.join(bucket).join(file)
+}
+
+/// Look up the 2-letter country code seen from `proxy` (or from the local path
+/// when `proxy` is `None`) by querying <https://ipinfo.io/country>.
+/// Returns `None` on any error (timeout, parse failure, etc.) — the check is
+/// advisory and must never block the scan.
+async fn fetch_country(proxy: Option<&str>, timeout_secs: u64) -> Option<String> {
+    use std::time::Duration;
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs.min(8)))
+        .user_agent("bulbascan-geo-check/1");
+
+    if let Some(proxy_url) = proxy {
+        builder = builder.proxy(reqwest::Proxy::all(proxy_url).ok()?);
+    }
+
+    let client = builder.build().ok()?;
+    let text = client
+        .get("https://ipinfo.io/country")
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+
+    let country = text.trim().to_uppercase();
+    if country.len() == 2 && country.chars().all(|c| c.is_ascii_alphabetic()) {
+        Some(country)
+    } else {
+        None
+    }
+}
+
+#[tokio::main]
+#[allow(clippy::too_many_lines)]
+async fn main() -> anyhow::Result<()> {
+    let matches = Args::command().get_matches();
+    let mut args = Args::from_arg_matches(&matches)?;
+    let loaded_config = config::load_and_apply(&mut args, &matches)?;
+    let version = env!("CARGO_PKG_VERSION");
+    let worker_state_path = worker_state_path();
+    let legacy_worker_path = std::path::Path::new(WORKERS_FILE);
+
+    // Resolve concurrency: CLI flag wins, else last-saved value, else default.
+    let concurrency: usize = args
+        .concurrency
+        .unwrap_or_else(|| {
+            load_workers(&worker_state_path)
+                .or_else(|| load_workers(legacy_worker_path))
+                .unwrap_or(DEFAULT_WORKERS)
+        })
+        .clamp(1, 1000);
+
+    let using_default_results_dir = args.results_dir == std::path::Path::new("results");
+
+    let term = console::Term::stderr();
+    let style_header = console::Style::new().cyan().bold();
+    let style_dim = console::Style::new().dim();
+    let style_value = console::Style::new().yellow();
+    let style_ok = console::Style::new().green().bold();
+
+    let _ = term.write_line("");
+
+    // Big block-letter ASCII art — left-aligned, 2-space margin
+    let ascii_name: &[&str] = &[
+        "██████╗ ██╗   ██╗██╗     ██████╗   █████╗ ███████╗ ██████╗ █████╗ ███╗   ██╗",
+        "██╔══██╗██║   ██║██║     ██╔══██╗ ██╔══██╗██╔════╝██╔════╝██╔══██╗████╗  ██║",
+        "██████╔╝██║   ██║██║     ██████╔╝ ███████║███████╗██║     ███████║██╔██╗ ██║",
+        "██╔══██╗██║   ██║██║     ██╔══██╗ ██╔══██║╚════██║██║     ██╔══██║██║╚██╗██║",
+        "██████╔╝╚██████╔╝███████╗██████╔╝ ██║  ██║███████║╚██████╗██║  ██║██║ ╚████║",
+    ];
+
+    let name_style = console::Style::new().green().bold();
+
+    if args.ascii_only {
+        let _ = term.write_line("  BULBASCAN");
+    } else {
+        for line in ascii_name {
+            let _ = term.write_line(&format!("  {}", name_style.apply_to(line)));
+        }
+    }
+
+    let _ = term.write_line(&format!(
+        "  {} 🥔   {}",
+        style_dim.apply_to(format!("v{version}")),
+        style_dim.apply_to("← → adjust workers  q quit"),
+    ));
+    // Blank line = profile slot. LiveBar will overwrite it on the first tick.
+    let _ = term.write_line("");
+    if let Some(config_path) = loaded_config.as_ref() {
+        let _ = term.write_line(&format!(
+            "  {} {}",
+            style_dim.apply_to("config"),
+            style_value.apply_to(config_path.display()),
+        ));
+    }
+
+    if !args.format.eq_ignore_ascii_case("text") && !args.format.eq_ignore_ascii_case("json") {
+        anyhow::bail!(
+            "Unsupported output format '{}'. Use 'text' or 'json'.",
+            args.format
+        );
+    }
+
+    if let Some(config_path) = args.emit_xray_socks_config.as_ref() {
+        let control_link = args
+            .control_link
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("--control-link is required"))?;
+        let generated =
+            xray::generate_xray_socks_client_config(control_link, &args.xray_socks_listen)?;
+        if let Some(parent) = config_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let payload = serde_json::to_vec_pretty(&generated.config)?;
+        tokio::fs::write(config_path, payload).await?;
+        println!(
+            "Xray SOCKS client config saved to {}.",
+            config_path.display()
+        );
+        println!(
+            "Start Xray with that file, then use --control-proxy {}",
+            generated.socks_proxy_url
+        );
+        return Ok(());
+    }
+
+    // --list-geosite-categories: print all categories and exit
+    if let Some(ref dat_path) = args.list_geosite_categories {
+        match geosite::list_categories(dat_path) {
+            Ok(cats) => {
+                println!("Categories in {}:", dat_path.display());
+                for cat in cats {
+                    println!("  {cat}");
+                }
+            }
+            Err(e) => anyhow::bail!("Error: {e}"),
+        }
+        return Ok(());
+    }
+
+    // --self-test: scan a known set of domains and verify detection correctness.
+    if args.self_test {
+        let has_ctrl = args.control_proxy.is_some();
+        let test_domains = selftest::domains_to_scan(has_ctrl);
+        let tmp = std::env::temp_dir().join("bulbascan_selftest");
+        tokio::fs::create_dir_all(&tmp).await?;
+
+        let policy = args.profile.as_scanner_policy();
+        let local_proxies: Vec<String> = args.proxy.clone().into_iter().collect();
+
+        eprintln!(
+            "self-test: scanning {} domains locally...",
+            test_domains.len()
+        );
+        let local_scan = scanner::run_scan(
+            test_domains.clone(),
+            local_proxies,
+            8,
+            tmp.join("ok.log"),
+            tmp.join("blocked.log"),
+            args.timeout,
+            5,
+            0,
+            args.verbose,
+            args.format.clone(),
+            policy,
+            None,
+            args.signatures.clone(),
+            args.max_body_size,
+            false,
+            args.browser.as_deref(),
+            "self-test".to_string(),
+        )
+        .await?;
+
+        let Some((mut local_results, _)) = local_scan else {
+            eprintln!("self-test: scan cancelled.");
+            return Ok(());
+        };
+
+        if let Some(ref ctrl_url) = args.control_proxy {
+            eprintln!("self-test: control comparison via {ctrl_url}...");
+            let ctrl_scan = scanner::run_scan(
+                test_domains,
+                vec![ctrl_url.clone()],
+                8,
+                tmp.join("ctrl_ok.log"),
+                tmp.join("ctrl_blocked.log"),
+                args.timeout,
+                5,
+                0,
+                false,
+                args.format.clone(),
+                policy,
+                None,
+                args.signatures.clone(),
+                args.max_body_size,
+                false,
+                None,
+                "self-test-ctrl".to_string(),
+            )
+            .await?;
+
+            if let Some((ctrl_results, _)) = ctrl_scan {
+                for local in &mut local_results {
+                    if local.routing_decision == scanner::RoutingDecision::DirectOk {
+                        continue;
+                    }
+                    let ctrl_sees_direct = ctrl_results
+                        .iter()
+                        .find(|c| c.domain == local.domain)
+                        .is_some_and(|c| c.routing_decision == scanner::RoutingDecision::DirectOk);
+                    if ctrl_sees_direct {
+                        local.routing_decision = scanner::RoutingDecision::ProxyRequired;
+                    }
+                }
+            }
+        }
+
+        let test_results = selftest::evaluate(&local_results, has_ctrl);
+        selftest::print_report(&test_results, has_ctrl);
+
+        let failed = test_results.iter().filter(|r| !r.passed).count();
+        if failed > 0 {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    if using_default_results_dir && args.fetch_radar == 0 {
+        if let Some(first) = args.files.first() {
+            args.results_dir = default_results_dir_for_input(first);
+        } else if let Some(dat) = args.import_geosite.as_ref() {
+            args.results_dir = default_results_dir_for_input(dat);
+        } else {
+            args.results_dir = runtime_data_root_dir().join("results_scan");
+        }
+    }
+
+    // Create results directory
+    if !args.results_dir.exists() {
+        tokio::fs::create_dir_all(&args.results_dir).await?;
+    }
+    for bucket in [TXT_DIR, JSON_DIR, YAML_DIR, BIN_DIR] {
+        tokio::fs::create_dir_all(args.results_dir.join(bucket)).await?;
+    }
+
+    // Prepare paths
+    let out_ok = output_path(&args.results_dir, TXT_DIR, &args.out_ok.to_string_lossy());
+    let out_blocked = output_path(
+        &args.results_dir,
+        TXT_DIR,
+        &args.out_blocked.to_string_lossy(),
+    );
+    let out_ok_cleanup_path = out_ok.clone();
+    let geosite_path = output_path(&args.results_dir, BIN_DIR, &args.geosite.to_string_lossy());
+    let report_path = output_path(&args.results_dir, TXT_DIR, "report.txt");
+    let services_report_path = output_path(&args.results_dir, TXT_DIR, "services.txt");
+    let manual_review_hotspots_path = output_path(&args.results_dir, TXT_DIR, "hotspots.txt");
+    let proxy_required_path = output_path(&args.results_dir, TXT_DIR, "proxy.txt");
+    let direct_ok_path = output_path(&args.results_dir, TXT_DIR, "direct.txt");
+    let manual_review_path = output_path(&args.results_dir, TXT_DIR, "review.txt");
+    let blocked_domains_path = output_path(
+        &args.results_dir,
+        TXT_DIR,
+        &args.blocked_list.to_string_lossy(),
+    );
+    let comparison_report_path = output_path(&args.results_dir, TXT_DIR, "comparison.txt");
+    let confirmed_proxy_required_path = output_path(&args.results_dir, TXT_DIR, "confirmed.txt");
+    let control_proxy_health_path = output_path(&args.results_dir, TXT_DIR, "control-health.txt");
+    let service_geo_report_path = output_path(&args.results_dir, TXT_DIR, "service-geo.txt");
+    let validation_report_path = output_path(&args.results_dir, TXT_DIR, "validation.txt");
+    let strict_sing_box_rule_set_path = output_path(&args.results_dir, JSON_DIR, "strict.json");
+    let strict_sing_box_binary_rule_set_path =
+        output_path(&args.results_dir, BIN_DIR, "strict.srs");
+    let strict_sing_box_route_path = output_path(&args.results_dir, JSON_DIR, "strict-route.json");
+    let strict_sing_box_binary_route_path =
+        output_path(&args.results_dir, JSON_DIR, "strict-binary-route.json");
+    let strict_xray_route_path = output_path(&args.results_dir, JSON_DIR, "strict-xray.json");
+    let strict_mihomo_rule_set_path = output_path(&args.results_dir, TXT_DIR, "strict.txt");
+    let strict_mihomo_binary_rule_set_path = output_path(&args.results_dir, BIN_DIR, "strict.mrs");
+    let strict_mihomo_provider_path = output_path(&args.results_dir, YAML_DIR, "strict.yaml");
+    let strict_mihomo_binary_provider_path =
+        output_path(&args.results_dir, YAML_DIR, "strict-binary.yaml");
+    let strict_openwrt_pbr_path = output_path(&args.results_dir, TXT_DIR, "strict-openwrt.txt");
+    let strict_openwrt_dnsmasq_path =
+        output_path(&args.results_dir, TXT_DIR, "strict-dnsmasq.conf");
+    let publication_report_path = output_path(&args.results_dir, TXT_DIR, "publication.txt");
+    let output_format = args.format.clone();
+    let signatures_file = args.signatures.clone();
+    let mut scan_policy = args.profile.as_scanner_policy();
+    if args.browser_all {
+        scan_policy.browser_verify_all = true;
+        scan_policy.max_browser_verifications = usize::MAX;
+    }
+    if let Some(browser_tabs) = args.browser_tabs {
+        scan_policy.max_parallel_browser_tabs = browser_tabs.max(1);
+    }
+    let explicit_state_dir = args.state_dir.clone();
+    let state_dir = explicit_state_dir
+        .clone()
+        .unwrap_or_else(|| args.results_dir.join("state"));
+    let state_dir_ref = state_dir.as_path();
+    let state_enabled = true;
+
+    let mut local_state = match state::LocalState::load(state_dir_ref) {
+        Ok(existing) => existing,
+        Err(err) => {
+            anyhow::bail!(
+                "State directory {} is corrupted or unreadable: {err}\n\
+                 Fix or remove the directory, or point --state-dir elsewhere.",
+                state_dir.display()
+            );
+        }
+    };
+
+    // Read or fetch domains
+    let mut domains = Vec::new();
+    let mut seen = HashSet::new();
+    let mut expected_outcomes = HashMap::new();
+
+    if args.fetch_radar > 0 {
+        println!(
+            "Fetching top {} domains from Cloudflare Radar...",
+            args.fetch_radar
+        );
+        let radar = radar::RadarClient::new(args.radar_token)?;
+        match radar.fetch_top_domains(args.fetch_radar).await {
+            Ok(fetched) => {
+                println!("Successfully fetched {} domains.", fetched.len());
+                domains = fetched;
+            }
+            Err(e) => anyhow::bail!("Error fetching from Radar: {e}"),
+        }
+    } else {
+        // Load from one or more files.
+        // .dat  -> binary geosite.dat using --import-geosite-category
+        // .json -> JSON rule-set / route snippets with embedded domain values
+        // anything else -> line-oriented text domain/rule file
+        let files = args.files;
+        let geosite_category = &args.import_geosite_category;
+        let mut text_inputs = Vec::new();
+        let mut json_inputs = Vec::new();
+
+        // Also honour the legacy --import-geosite explicit flag if set
+        if let Some(ref dat_path) = args.import_geosite
+            && !files.iter().any(|f| f == dat_path)
+        {
+            match geosite::decode_domains(dat_path, geosite_category) {
+                Ok(imported) => {
+                    for domain in imported {
+                        if seen.insert(domain.clone()) {
+                            domains.push(domain);
+                        }
+                    }
+                }
+                Err(e) => anyhow::bail!("Error: {e}"),
+            }
+        }
+
+        for path in files {
+            let is_dat = path.extension().and_then(|e| e.to_str()) == Some("dat");
+            let is_json = path.extension().and_then(|e| e.to_str()) == Some("json");
+
+            if is_dat {
+                if let Ok(imported) = geosite::decode_domains(&path, geosite_category) {
+                    let before = domains.len();
+                    for domain in imported {
+                        if seen.insert(domain.clone()) {
+                            domains.push(domain);
+                        }
+                    }
+                    println!(
+                        "  → {} domains imported from {}.",
+                        domains.len() - before,
+                        path.display()
+                    );
+                } else {
+                    // Category not found — show available ones and ask interactively.
+                    let available = geosite::list_categories(&path).unwrap_or_default();
+                    println!(
+                        "\nCategory '{}' not found in {}.",
+                        geosite_category,
+                        path.display()
+                    );
+                    if available.is_empty() {
+                        eprintln!(
+                            "Error: Could not read any categories from the file. Is it a valid geosite.dat?"
+                        );
+                        eprintln!("Press Enter to exit.");
+                        let mut buf = String::new();
+                        let _ = std::io::stdin().read_line(&mut buf);
+                        anyhow::bail!("Exiting due to invalid geosite.dat");
+                    }
+
+                    if !std::io::stdin().is_terminal() {
+                        anyhow::bail!(
+                            "Category '{}' not found in {}. Available: {}",
+                            geosite_category,
+                            path.display(),
+                            available.join(", ")
+                        );
+                    }
+                    println!("Available categories:");
+                    for cat in &available {
+                        println!("  - {}", cat.to_lowercase());
+                    }
+                    print!("\nType a category name (or 'all') and press Enter: ");
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).ok();
+                    let chosen = input.trim().to_string();
+
+                    // Clear the screen so the massive list of categories goes away
+                    print!("\x1B[2J\x1B[1;1H");
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+
+                    if chosen.is_empty() {
+                        anyhow::bail!("No category entered. Exiting.");
+                    }
+                    match geosite::decode_domains(&path, &chosen) {
+                        Ok(imported) => {
+                            let before = domains.len();
+                            for domain in imported {
+                                if seen.insert(domain.clone()) {
+                                    domains.push(domain);
+                                }
+                            }
+                            println!(
+                                "  → {} domains imported from {} (category: {}).",
+                                domains.len() - before,
+                                path.display(),
+                                chosen
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            eprintln!("Press Enter to exit.");
+                            let mut buf = String::new();
+                            let _ = std::io::stdin().read_line(&mut buf);
+                            anyhow::bail!("Exiting due to missing/invalid category");
+                        }
+                    }
+                }
+            } else if is_json {
+                if !path.exists() || !path.is_file() {
+                    anyhow::bail!("Error: Input file '{}' not found.", path.display());
+                }
+                json_inputs.push((json_inputs.len(), path.clone()));
+            } else {
+                if !path.exists() || !path.is_file() {
+                    if path == std::path::Path::new("targets.txt") {
+                        // silently skip the default placeholder when not present
+                        continue;
+                    }
+                    anyhow::bail!("Error: Input file '{}' not found.", path.display());
+                }
+
+                // Defer plain-text file ingestion so multiple independent inputs
+                // can be read concurrently, then merged deterministically.
+                text_inputs.push((text_inputs.len(), path.clone()));
+            }
+        }
+
+        if !json_inputs.is_empty() {
+            let mut tasks = JoinSet::new();
+            for (index, path) in json_inputs {
+                tasks.spawn(async move {
+                    let entries = load_domains_from_json_file(&path).await;
+                    (index, path, entries)
+                });
+            }
+
+            let mut loaded = Vec::new();
+            while let Some(result) = tasks.join_next().await {
+                let (index, path, entries) = result?;
+                loaded.push((index, path, entries?));
+            }
+
+            loaded.sort_by_key(|(index, _, _)| *index);
+
+            for (_, path, entries) in loaded {
+                let before = domains.len();
+                for domain in entries {
+                    if seen.insert(domain.clone()) {
+                        domains.push(domain);
+                    }
+                }
+
+                if domains.len() - before > 0 {
+                    println!(
+                        "  → {} domains imported from {}.",
+                        domains.len() - before,
+                        path.display()
+                    );
+                }
+            }
+        }
+
+        if !text_inputs.is_empty() {
+            let mut tasks = JoinSet::new();
+            for (index, path) in text_inputs {
+                tasks.spawn(async move {
+                    let entries = load_annotated_domains_from_file(&path).await;
+                    (index, path, entries)
+                });
+            }
+
+            let mut loaded = Vec::new();
+            while let Some(result) = tasks.join_next().await {
+                let (index, path, entries) = result?;
+                loaded.push((index, path, entries?));
+            }
+
+            loaded.sort_by_key(|(index, _, _)| *index);
+
+            for (_, path, entries) in loaded {
+                let before = domains.len();
+                for (domain, expected) in entries {
+                    if seen.insert(domain.clone()) {
+                        if let Some(expected) = expected {
+                            expected_outcomes.insert(domain.clone(), expected);
+                        }
+                        domains.push(domain);
+                    }
+                }
+
+                if domains.len() - before > 0 {
+                    println!(
+                        "  → {} domains loaded from {}.",
+                        domains.len() - before,
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    if state_enabled {
+        let (pending, skipped) = filter_pending_domains(
+            domains,
+            &mut expected_outcomes,
+            &local_state,
+            args.refresh_known,
+        );
+        domains = pending;
+        if skipped > 0 {
+            println!("State cache skipped {skipped} already-known domains (blocked/direct).");
+        }
+    }
+
+    let _ = term.write_line("");
+
+    // Run the scanner process
+    let mut proxies = Vec::new();
+
+    if let Some(p) = args.proxy.clone() {
+        proxies.push(p);
+    }
+
+    if let Some(path) = args.proxies {
+        if path.exists() && path.is_file() {
+            proxies.extend(load_trimmed_lines_from_file(&path).await?);
+        } else {
+            anyhow::bail!("Error: Proxies file '{}' not found.", path.display());
+        }
+    }
+
+    if !proxies.is_empty() {
+        println!("Loaded {} proxies for rotation.", proxies.len());
+    }
+
+    // Output path string passed to LiveBar for the dynamic profile header.
+    let output_display = args.results_dir.display().to_string();
+
+    let mut final_workers = concurrency;
+    let scan_results = if domains.is_empty() {
+        Vec::new()
+    } else {
+        let Some((results, fw)) = scanner::run_scan(
+            domains.clone(),
+            proxies,
+            concurrency,
+            out_ok,
+            out_blocked,
+            args.timeout,
+            args.max_redirects,
+            args.global_timeout,
+            args.verbose,
+            output_format.clone(),
+            scan_policy,
+            args.sni_fragment,
+            signatures_file.clone(),
+            args.max_body_size,
+            args.potato,
+            args.browser.as_deref(),
+            output_display.clone(),
+        )
+        .await?
+        else {
+            // User cancelled the scan via 'q'
+            return Ok(());
+        };
+        // Persist the live-adjusted worker count for next run.
+        final_workers = fw;
+        save_workers(&worker_state_path, fw);
+        results
+    };
+
+    let has_control_proxy = args.control_proxy.is_some();
+    if state_enabled {
+        if has_control_proxy {
+            local_state.ingest_scan_results_conservative(&scan_results);
+        } else {
+            local_state.ingest_scan_results(&scan_results);
+        }
+    }
+
+    if args.export_profile == ExportProfileArg::Simple && out_ok_cleanup_path.exists() {
+        let _ = std::fs::remove_file(&out_ok_cleanup_path);
+    }
+
+    let mut blocked_domains_for_outputs = if state_enabled {
+        local_state.blocked_domains()
+    } else {
+        blocked_domains_from_results(&scan_results)
+    };
+    match write_blocked_domain_list(
+        &blocked_domains_for_outputs,
+        &blocked_domains_path,
+        args.blocked_list_format,
+    ) {
+        Ok(()) => println!(
+            "Blocked domain list saved to {}.",
+            blocked_domains_path.display()
+        ),
+        Err(e) => eprintln!("Error writing blocked domain list: {e}"),
+    }
+    if !has_control_proxy && let Some(merge_path) = args.merge_into_list.as_ref() {
+        match merge_blocked_domains_into_list(
+            merge_path,
+            &blocked_domains_for_outputs,
+            args.blocked_list_format,
+        )
+        .await
+        {
+            Ok(merged_count) => println!(
+                "Merged blocked domains into {} ({} total domains).",
+                merge_path.display(),
+                merged_count
+            ),
+            Err(e) => eprintln!(
+                "Error merging blocked domains into {}: {e}",
+                merge_path.display()
+            ),
+        }
+    }
+
+    if matches!(
+        args.export_profile,
+        ExportProfileArg::Router | ExportProfileArg::Full
+    ) {
+        match scanner::write_human_report(&scan_results, &report_path) {
+            Ok(()) => println!("Human-readable report saved to {}.", report_path.display()),
+            Err(e) => eprintln!("Error writing report: {e}"),
+        }
+        match scanner::write_service_report(&scan_results, &services_report_path) {
+            Ok(()) => println!(
+                "Service report saved to {}.",
+                services_report_path.display()
+            ),
+            Err(e) => eprintln!("Error writing service report: {e}"),
+        }
+        match scanner::write_manual_review_hotspot_report(
+            &scan_results,
+            None,
+            None,
+            &manual_review_hotspots_path,
+        ) {
+            Ok(()) => println!(
+                "Manual review hotspot report saved to {}.",
+                manual_review_hotspots_path.display()
+            ),
+            Err(e) => eprintln!("Error writing manual review hotspot report: {e}"),
+        }
+        match scanner::write_routing_lists(&scan_results, &args.results_dir) {
+            Ok(()) => {
+                println!(
+                    "Routing lists saved to {}, {}, and {}.",
+                    proxy_required_path.display(),
+                    direct_ok_path.display(),
+                    manual_review_path.display()
+                );
+            }
+            Err(e) => eprintln!("Error writing routing lists: {e}"),
+        }
+        match router_exports::write_router_exports(&scan_results, &args.results_dir) {
+            Ok(paths) => println!("Router-native exports saved to {}.", paths.join(", ")),
+            Err(e) => eprintln!("Error writing router-native exports: {e}"),
+        }
+        if args.export_profile == ExportProfileArg::Full {
+            match router_exports::write_generic_apex_exports(&scan_results, &args.results_dir) {
+                Ok(paths) => println!("Generic apex exports saved to {}.", paths.join(", ")),
+                Err(e) => eprintln!("Error writing generic apex exports: {e}"),
+            }
+        }
+    }
+    if args.export_profile == ExportProfileArg::Full {
+        match validation::write_validation_report(
+            &scan_results,
+            None,
+            None,
+            (!expected_outcomes.is_empty()).then_some(&expected_outcomes),
+            &validation_report_path,
+        ) {
+            Ok(()) => println!(
+                "Validation report saved to {}.",
+                validation_report_path.display()
+            ),
+            Err(e) => eprintln!("Error writing validation report: {e}"),
+        }
+    }
+
+    let mut geosite_domains = blocked_domains_for_outputs.clone();
+    let mut geosite_use_scan_results = true;
+    let mut comparison_results: Option<Vec<scanner::ComparisonResult>> = None;
+
+    if let Some(control_proxy) = args.control_proxy.clone() {
+        println!("Checking control proxy health...");
+
+        let control_health =
+            scanner::preflight_control_proxy(&control_proxy, args.timeout, args.max_redirects)
+                .await;
+        match scanner::write_control_proxy_health(&control_health, &control_proxy_health_path) {
+            Ok(()) => println!(
+                "Control proxy health saved to {}.",
+                control_proxy_health_path.display()
+            ),
+            Err(e) => eprintln!("Error writing control proxy health: {e}"),
+        }
+
+        // ── Proxy geo-location validation ─────────────────────────────────────
+        // Warn the user if the control proxy appears to be in the same country
+        // as the local network path — in that case geo-blocking is undetectable.
+        {
+            let local_country = fetch_country(None, args.timeout).await;
+            let proxy_country = fetch_country(Some(&control_proxy), args.timeout).await;
+            match (local_country.as_deref(), proxy_country.as_deref()) {
+                (Some(local), Some(proxy)) if local.eq_ignore_ascii_case(proxy) => {
+                    eprintln!(
+                        "[WARN] Control proxy is in the same country ({local}) as the local path."
+                    );
+                    eprintln!(
+                        "       Geo-blocking will NOT be detectable. Use an external EU/US proxy."
+                    );
+                }
+                (Some(local), Some(proxy)) => {
+                    println!("Control proxy geo-check: local={local}, proxy={proxy} — OK");
+                }
+                _ => {
+                    // ipinfo.io unreachable, non-fatal
+                }
+            }
+        }
+
+        if scanner::should_run_control_comparison(&control_health) {
+            // ── Smart comparison pre-filter ───────────────────────────────────
+            // Domains already confirmed direct_ok locally do not need a second
+            // scan — the control proxy won't change a working result. Only send
+            // unreachable, blocked, and manual_review domains for comparison.
+            // This reduces the comparison scan domain count by ~55% on typical
+            // RU/BY blocked lists where ~41 k of 75 k domains are direct_ok.
+            let comparison_domains: Vec<String> = domains
+                .iter()
+                .filter(|d| {
+                    !scan_results.iter().any(|r| {
+                        r.domain == **d && r.routing_decision == scanner::RoutingDecision::DirectOk
+                    })
+                })
+                .cloned()
+                .collect();
+            let skipped_direct = domains.len().saturating_sub(comparison_domains.len());
+            if skipped_direct > 0 {
+                println!(
+                    "Comparison pre-filter: skipping {skipped_direct} direct_ok domains (scanning {} domains via control proxy).",
+                    comparison_domains.len()
+                );
+            }
+
+            // Blank separator so the second scan's progress bar does not
+            // overwrite the first scan's completion messages.
+            println!();
+            println!("Control proxy is healthy. Running comparison scan...");
+
+            let Some((control_results, _)) = scanner::run_scan(
+                comparison_domains,
+                vec![control_proxy],
+                final_workers,
+                args.results_dir.join("control_ok.log"),
+                args.results_dir.join("control_blocked.log"),
+                args.timeout,
+                args.max_redirects,
+                args.global_timeout,
+                args.verbose,
+                output_format,
+                scan_policy,
+                args.sni_fragment,
+                signatures_file,
+                args.max_body_size,
+                args.potato,
+                args.browser.as_deref(),
+                output_display,
+            )
+            .await?
+            else {
+                return Ok(());
+            };
+
+            let comparisons = scanner::compare_with_control(&scan_results, &control_results);
+            let confirmed_proxy_required = blocked_domains_from_comparisons(&comparisons);
+            if state_enabled {
+                local_state.reconcile_comparison_results(&comparisons);
+            }
+            blocked_domains_for_outputs = if state_enabled {
+                local_state.blocked_domains()
+            } else {
+                confirmed_proxy_required.clone()
+            };
+            geosite_domains = blocked_domains_for_outputs.clone();
+            geosite_use_scan_results = false;
+
+            match write_blocked_domain_list(
+                &blocked_domains_for_outputs,
+                &blocked_domains_path,
+                args.blocked_list_format,
+            ) {
+                Ok(()) => println!(
+                    "Blocked domain list refreshed from confirmed comparison at {}.",
+                    blocked_domains_path.display()
+                ),
+                Err(e) => eprintln!("Error refreshing blocked domain list: {e}"),
+            }
+            if let Some(merge_path) = args.merge_into_list.as_ref() {
+                match merge_blocked_domains_into_list(
+                    merge_path,
+                    &blocked_domains_for_outputs,
+                    args.blocked_list_format,
+                )
+                .await
+                {
+                    Ok(merged_count) => println!(
+                        "Merged confirmed blocked domains into {} ({} total domains).",
+                        merge_path.display(),
+                        merged_count
+                    ),
+                    Err(e) => eprintln!(
+                        "Error merging confirmed blocked domains into {}: {e}",
+                        merge_path.display()
+                    ),
+                }
+            }
+            if matches!(
+                args.export_profile,
+                ExportProfileArg::Router | ExportProfileArg::Full
+            ) {
+                match scanner::write_control_comparison_report(
+                    &comparisons,
+                    &comparison_report_path,
+                ) {
+                    Ok(()) => println!(
+                        "Control comparison report saved to {}.",
+                        comparison_report_path.display()
+                    ),
+                    Err(e) => eprintln!("Error writing control comparison report: {e}"),
+                }
+                match scanner::write_confirmed_proxy_required(
+                    &comparisons,
+                    &confirmed_proxy_required_path,
+                ) {
+                    Ok(()) => println!(
+                        "Confirmed proxy-required list saved to {}.",
+                        confirmed_proxy_required_path.display()
+                    ),
+                    Err(e) => eprintln!("Error writing confirmed proxy-required list: {e}"),
+                }
+            }
+            let service_geo =
+                scanner::summarize_service_geo_with_local_results(&comparisons, &scan_results);
+            if matches!(
+                args.export_profile,
+                ExportProfileArg::Router | ExportProfileArg::Full
+            ) {
+                match scanner::write_service_geo_report(&service_geo, &service_geo_report_path) {
+                    Ok(()) => println!(
+                        "Service geo report saved to {}.",
+                        service_geo_report_path.display()
+                    ),
+                    Err(e) => eprintln!("Error writing service geo report: {e}"),
+                }
+                match scanner::write_manual_review_hotspot_report(
+                    &scan_results,
+                    Some(&comparisons),
+                    Some(&service_geo),
+                    &manual_review_hotspots_path,
+                ) {
+                    Ok(()) => println!(
+                        "Manual review hotspot report refreshed at {}.",
+                        manual_review_hotspots_path.display()
+                    ),
+                    Err(e) => eprintln!("Error refreshing manual review hotspot report: {e}"),
+                }
+                match router_exports::write_router_exports_for_domain_list(
+                    &blocked_domains_for_outputs,
+                    &args.results_dir,
+                ) {
+                    Ok(paths) => println!(
+                        "Router-native exports refreshed from confirmed comparison at {}.",
+                        paths.join(", ")
+                    ),
+                    Err(e) => eprintln!("Error refreshing router-native exports: {e}"),
+                }
+                match router_exports::write_strict_router_exports(&comparisons, &args.results_dir) {
+                    Ok(paths) => println!(
+                        "Strict router-native exports saved to {}.",
+                        paths.join(", ")
+                    ),
+                    Err(e) => eprintln!("Error writing strict router-native exports: {e}"),
+                }
+                if args.export_profile == ExportProfileArg::Full {
+                    match router_exports::write_split_router_exports(
+                        &comparisons,
+                        &service_geo,
+                        &args.results_dir,
+                    ) {
+                        Ok(paths) => println!(
+                            "Known-service and generic split exports saved to {}.",
+                            paths.join(", ")
+                        ),
+                        Err(e) => eprintln!("Error writing split router exports: {e}"),
+                    }
+                }
+            }
+            if args.export_profile == ExportProfileArg::Full {
+                match validation::write_validation_report(
+                    &scan_results,
+                    Some(&comparisons),
+                    Some(&service_geo),
+                    (!expected_outcomes.is_empty()).then_some(&expected_outcomes),
+                    &validation_report_path,
+                ) {
+                    Ok(()) => println!(
+                        "Validation report refreshed with dual-vantage evidence at {}.",
+                        validation_report_path.display()
+                    ),
+                    Err(e) => eprintln!("Error refreshing validation report: {e}"),
+                }
+            }
+
+            comparison_results = Some(comparisons);
+        } else {
+            println!("Control proxy health check failed. Skipping comparison scan.");
+            for stale in [
+                &comparison_report_path,
+                &confirmed_proxy_required_path,
+                &service_geo_report_path,
+                &strict_sing_box_rule_set_path,
+                &strict_sing_box_binary_rule_set_path,
+                &strict_sing_box_route_path,
+                &strict_sing_box_binary_route_path,
+                &strict_xray_route_path,
+                &strict_mihomo_rule_set_path,
+                &strict_mihomo_binary_rule_set_path,
+                &strict_mihomo_provider_path,
+                &strict_mihomo_binary_provider_path,
+                &strict_openwrt_pbr_path,
+                &strict_openwrt_dnsmasq_path,
+                &output_path(&args.results_dir, JSON_DIR, "bundle.json"),
+                &output_path(&args.results_dir, BIN_DIR, "bundle.srs"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle.txt"),
+                &output_path(&args.results_dir, BIN_DIR, "bundle.mrs"),
+                &output_path(&args.results_dir, YAML_DIR, "bundle.yaml"),
+                &output_path(&args.results_dir, YAML_DIR, "bundle-binary.yaml"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-binary-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "bundle-xray.json"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle-openwrt.txt"),
+                &output_path(&args.results_dir, TXT_DIR, "bundle-dnsmasq.conf"),
+                &output_path(&args.results_dir, JSON_DIR, "apex.json"),
+                &output_path(&args.results_dir, BIN_DIR, "apex.srs"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-binary-route.json"),
+                &output_path(&args.results_dir, JSON_DIR, "apex-xray.json"),
+                &output_path(&args.results_dir, TXT_DIR, "apex.txt"),
+                &output_path(&args.results_dir, BIN_DIR, "apex.mrs"),
+                &output_path(&args.results_dir, YAML_DIR, "apex.yaml"),
+                &output_path(&args.results_dir, YAML_DIR, "apex-binary.yaml"),
+                &output_path(&args.results_dir, TXT_DIR, "apex-openwrt.txt"),
+                &output_path(&args.results_dir, TXT_DIR, "apex-dnsmasq.conf"),
+            ] {
+                if stale.exists() {
+                    let _ = std::fs::remove_file(stale);
+                }
+            }
+        }
+    }
+
+    if matches!(
+        args.export_profile,
+        ExportProfileArg::Router | ExportProfileArg::Full
+    ) {
+        match publication::write_publication_outputs(
+            &scan_results,
+            comparison_results.as_deref(),
+            &args.results_dir,
+            Some(state_dir_ref),
+        ) {
+            Ok(()) => println!(
+                "Publication artifacts saved to {} and rescan queues updated in {}.",
+                publication_report_path.display(),
+                state_dir.display()
+            ),
+            Err(e) => eprintln!("Error writing publication artifacts: {e}"),
+        }
+    }
+
+    if !geosite_domains.is_empty() {
+        let _ = term.write_line(&format!(
+            "\n  {} Compiling {}...",
+            style_header.apply_to("📦"),
+            style_value.apply_to(geosite_path.display()),
+        ));
+
+        let geosite_result = if geosite_use_scan_results {
+            if state_enabled {
+                geosite::compile_domains(
+                    &blocked_domains_for_outputs,
+                    &geosite_path,
+                    &args.geosite_category,
+                )
+            } else {
+                geosite::compile(&scan_results, &geosite_path, &args.geosite_category)
+            }
+        } else {
+            geosite::compile_domains(
+                if state_enabled {
+                    &blocked_domains_for_outputs
+                } else {
+                    &geosite_domains
+                },
+                &geosite_path,
+                &args.geosite_category,
+            )
+        };
+
+        match geosite_result {
+            Ok(()) => {
+                let _ = term.write_line(&format!(
+                    "  {} geosite.dat generated successfully",
+                    style_ok.apply_to("✔"),
+                ));
+            }
+            Err(e) => eprintln!("Error generating geosite.dat: {e}"),
+        }
+    } else if geosite_path.exists() {
+        let _ = std::fs::remove_file(&geosite_path);
+    }
+
+    if state_enabled {
+        match local_state.save(state_dir_ref).await {
+            Ok(()) => println!("Local state saved to {}.", state_dir.display()),
+            Err(err) => eprintln!("Error saving state to {}: {err}", state_dir.display()),
+        }
+    }
+
+    // If run by double-clicking on Windows (<= 2 args), pause before exit
+    if cfg!(windows) && std::env::args().len() <= 2 {
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() && std::env::var("CI").is_err() {
+            println!("\nPress Enter to exit...");
+            let mut input = String::new();
+            let _ = std::io::stdin().read_line(&mut input);
+        }
+    }
+
+    Ok(())
+}

@@ -1,0 +1,390 @@
+//! Two-line live block: [profile header] + [bar].
+//!
+//! * `prev_cols` tracks previous terminal width.
+//! * On resize: old content may reflow to N phys lines each → go up 2N-1, then `\x1b[J`.
+//! * Written to stderr. Cursor hidden while active. ASCII-safe bar chars.
+
+use crossterm::terminal;
+use std::io::IsTerminal;
+use std::io::{self, Write};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+};
+use std::time::{Duration, Instant};
+use unicode_width::UnicodeWidthChar;
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+const SPEED_SMOOTHING_WINDOW: Duration = Duration::from_secs(3);
+
+fn fit_to_width(s: &str, max_cols: usize) -> String {
+    if max_cols == 0 {
+        return String::new();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut vis = 0usize;
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            out.push(ch);
+            for c in chars.by_ref() {
+                out.push(c);
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if vis + w > max_cols {
+            break;
+        }
+        out.push(ch);
+        vis += w;
+    }
+    out
+}
+
+fn vis_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum()
+}
+
+fn tier(n: usize) -> &'static str {
+    match n {
+        0..=50 => "Safe",
+        51..=100 => "Standard",
+        101..=200 => "Balanced",
+        201..=300 => "Active",
+        301..=400 => "Fast",
+        401..=500 => "Turbo",
+        501..=600 => "Heavy",
+        601..=700 => "Intense",
+        701..=800 => "Brute",
+        801..=900 => "Rush",
+        _ => "Aggressive",
+    }
+}
+
+fn stderr_supports_ansi() -> bool {
+    if !io::stderr().is_terminal() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        crossterm::ansi_support::supports_ansi()
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var("TERM")
+            .map(|term| !term.eq_ignore_ascii_case("dumb"))
+            .unwrap_or(true)
+    }
+}
+
+fn smoothed_speed(current_pos: u64, first_pos: u64, elapsed: Duration) -> Option<u64> {
+    let nanos = elapsed.as_nanos();
+    if nanos == 0 {
+        return None;
+    }
+
+    let delta = u128::from(current_pos.saturating_sub(first_pos));
+    let rounded_per_sec = (delta * 1_000_000_000_u128 + nanos / 2) / nanos;
+    Some(u64::try_from(rounded_per_sec).unwrap_or(u64::MAX))
+}
+
+// ─── public API ───────────────────────────────────────────────────────────────
+
+pub struct LiveBar {
+    pub pos: Arc<AtomicU64>,
+    pub ok: Arc<AtomicU64>,
+    pub blocked: Arc<AtomicU64>,
+    pub dead: Arc<AtomicU64>,
+    pub workers: Arc<AtomicUsize>,
+    total: u64,
+    start: Instant,
+    stopped: Arc<AtomicBool>,
+    out: Arc<Mutex<io::Stderr>>,
+    potato: bool,
+    output_display: String,
+    ansi_enabled: bool,
+    /// Terminal width from the previous render tick.
+    prev_cols: Arc<AtomicUsize>,
+    speed_history: Mutex<Vec<(Instant, u64)>>,
+    speed_value: AtomicU64,
+    last_rendered: Mutex<Option<(String, String)>>,
+}
+
+impl LiveBar {
+    pub fn new(
+        total: u64,
+        workers: Arc<AtomicUsize>,
+        potato: bool,
+        output_display: String,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            pos: Arc::new(AtomicU64::new(0)),
+            ok: Arc::new(AtomicU64::new(0)),
+            blocked: Arc::new(AtomicU64::new(0)),
+            dead: Arc::new(AtomicU64::new(0)),
+            workers,
+            total,
+            start: Instant::now(),
+            stopped: Arc::new(AtomicBool::new(false)),
+            out: Arc::new(Mutex::new(io::stderr())),
+            potato,
+            output_display,
+            ansi_enabled: stderr_supports_ansi(),
+            prev_cols: Arc::new(AtomicUsize::new(0)),
+            speed_history: Mutex::new(Vec::with_capacity(32)),
+            speed_value: AtomicU64::new(0),
+            last_rendered: Mutex::new(None),
+        })
+    }
+
+    /// Print a log line — clears current bar line, prints msg, bar redraws next tick.
+    pub fn println(&self, msg: impl AsRef<str>) {
+        let mut o = self.out.lock().unwrap();
+        if self.ansi_enabled {
+            // Go up past the profile line, clear it, print msg, leave cursor for bar tick.
+            write!(o, "\x1b[1A\r\x1b[2K{}\n\n", msg.as_ref()).ok();
+        } else {
+            writeln!(o, "{}", msg.as_ref()).ok();
+        }
+        o.flush().ok();
+    }
+
+    pub fn finish(&self, msg: impl AsRef<str>) {
+        self.stopped.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(150));
+        let mut o = self.out.lock().unwrap();
+        if self.ansi_enabled {
+            write!(o, "\x1b[?25h\r\x1b[2K{}\n", msg.as_ref()).ok();
+        } else {
+            writeln!(o, "\r{}", msg.as_ref()).ok();
+        }
+        o.flush().ok();
+    }
+
+    pub fn start_draw_thread(self: &Arc<Self>) -> std::thread::JoinHandle<()> {
+        let bar = Arc::clone(self);
+        {
+            let mut o = bar.out.lock().unwrap();
+            if bar.ansi_enabled {
+                // main.rs already printed a blank line (profile slot).
+                // Write one more \n to reserve the bar slot; hide cursor.
+                write!(o, "\n\x1b[?25l").ok();
+            }
+            o.flush().ok();
+        }
+        std::thread::spawn(move || {
+            let frames: &[&str] = if bar.potato {
+                &["🌱", "🌿", "🥔", "🍟", "😋"]
+            } else if cfg!(windows) {
+                &["-"]
+            } else {
+                &["-", "\\", "|", "/"]
+            };
+            let mut tick = 0usize;
+            loop {
+                if bar.stopped.load(Ordering::Relaxed) {
+                    if let Ok(mut o) = bar.out.lock() {
+                        if bar.ansi_enabled {
+                            write!(o, "\x1b[?25h\r\x1b[2K").ok();
+                        } else {
+                            writeln!(o).ok();
+                        }
+                        o.flush().ok();
+                    }
+                    break;
+                }
+                bar.render(frames[tick % frames.len()]);
+                tick += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn render(&self, spinner: &str) {
+        let (cols, _) = terminal::size().unwrap_or((120, 30));
+        let cols = cols as usize;
+        let max_vis = cols.saturating_sub(1);
+
+        // ── metrics ──────────────────────────────────────────────────────
+        let pos = self.pos.load(Ordering::Relaxed);
+        let ok = self.ok.load(Ordering::Relaxed);
+        let blocked = self.blocked.load(Ordering::Relaxed);
+        let dead = self.dead.load(Ordering::Relaxed);
+        let workers = self.workers.load(Ordering::Relaxed);
+        let profile = tier(workers);
+
+        let elapsed = self.start.elapsed();
+        let s = elapsed.as_secs();
+        let elapsed_str = format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60);
+
+        let mut speed = self.speed_value.load(Ordering::Relaxed);
+        if let Ok(mut history) = self.speed_history.try_lock() {
+            let now = Instant::now();
+            history.push((now, pos));
+
+            let cutoff = now.checked_sub(SPEED_SMOOTHING_WINDOW).unwrap_or(now);
+            while history.len() > 2 && history[1].0 <= cutoff {
+                history.remove(0);
+            }
+
+            if let Some(&(first_t, first_pos)) = history.first() {
+                let dt = now.saturating_duration_since(first_t);
+                if dt >= Duration::from_millis(250)
+                    && let Some(next_speed) = smoothed_speed(pos, first_pos, dt)
+                {
+                    speed = next_speed;
+                    self.speed_value.store(speed, Ordering::Relaxed);
+                }
+            }
+        }
+        if speed == 0 && s > 0 && s < 2 {
+            speed = pos / s; // Fallback to avg for first 2 seconds
+        }
+
+        let pct = if self.total > 0 {
+            pos * 100 / self.total
+        } else {
+            0
+        };
+        let eta_s = if speed > 0 {
+            self.total.saturating_sub(pos) / speed
+        } else {
+            0
+        };
+        let eta_str = if eta_s >= 3600 {
+            format!("{}h", (eta_s + 1800) / 3600)
+        } else if eta_s >= 60 {
+            format!("{}m", (eta_s + 30) / 60)
+        } else {
+            format!("{eta_s}s")
+        };
+
+        // ── profile header (line 1) ───────────────────────────────────
+        let profile_raw = format!(
+            "  \x1b[2mProfile:\x1b[0m \x1b[33m{profile}\x1b[0m  \x1b[2mWorkers:\x1b[0m \x1b[33m{workers}\x1b[0m  \x1b[2mOutput:\x1b[0m \x1b[33m{}\x1b[0m",
+            self.output_display
+        );
+        let profile_line = fit_to_width(&profile_raw, max_vis);
+
+        // ── bar (line 2) ──────────────────────────────────────────────
+        // Right plain (width measurement — no ANSI)
+        let right_plain = format!(
+            "] {pct:>3}% | {pos}/{tot} | v {ok} X {blocked} o {dead} | {speed}/s | ETA: {eta_str}",
+            tot = self.total,
+        );
+        let right_vis = vis_width(&right_plain);
+
+        // Left prefix: " {sp} [{elapsed}] ["
+        let sp_vis: usize = spinner
+            .chars()
+            .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+            .sum();
+        let left_vis = 1 + sp_vis + 1 + 1 + elapsed_str.len() + 1 + 2;
+
+        // Bar fill
+        let bar_w = max_vis.saturating_sub(left_vis + right_vis);
+        let filled = if self.total > 0 && bar_w > 0 {
+            let pos_u = usize::try_from(pos).unwrap_or(usize::MAX);
+            let tot_u = usize::try_from(self.total).unwrap_or(usize::MAX);
+            (bar_w * pos_u / tot_u).min(bar_w)
+        } else {
+            0
+        };
+        let empty = bar_w.saturating_sub(filled);
+
+        // Colorized bar line
+        let sp_col = format!("\x1b[32m{spinner}\x1b[0m");
+        let bar_col = format!(
+            "\x1b[36m{}\x1b[34;2m{}\x1b[0m",
+            "\u{2588}".repeat(filled), // █
+            "\u{2591}".repeat(empty),  // ░
+        );
+        let sep = "\x1b[2m|\x1b[0m";
+        let right_col = format!(
+            "] {pct:>3}% {sep} {pos}/{tot} {sep} \x1b[32m\u{2713} {ok}\x1b[0m \x1b[31m\u{2717} {blocked}\x1b[0m \x1b[2m\u{25cb} {dead}\x1b[0m {sep} \x1b[33m{speed}/s\x1b[0m {sep} ETA: {eta_str}",
+            tot = self.total,
+        );
+        let bar_raw = format!(" {sp_col} [{elapsed_str}] [{bar_col}{right_col}");
+        let bar_line = fit_to_width(&bar_raw, max_vis);
+
+        if !self.ansi_enabled {
+            let mut o = self.out.lock().unwrap();
+            write!(o, "\r[{elapsed_str}] {pct:>3}% | {pos}/{} | ok={ok} blocked={blocked} dead={dead} | {speed}/s | ETA: {eta_str}     ", self.total).ok();
+            o.flush().ok();
+            self.prev_cols.store(cols, Ordering::Relaxed);
+            if let Ok(mut last) = self.last_rendered.lock() {
+                *last = Some((profile_line, bar_line));
+            }
+            return;
+        }
+
+        // ── erase old 2-line block, redraw ───────────────────────────
+        //
+        // Both previous lines were truncated to (prev_cols - 1) columns.
+        // After terminal narrows to curr_cols, each line may wrap to
+        // ceil((prev_cols-1) / curr_cols) physical lines.
+        // Cursor sits at the LAST physical line of the old bar.
+        // go_up = 2 * old_per_line - 1 brings us to top of old profile line.
+        // Then \r\x1b[J wipes everything from there down, and we redraw both.
+        let pc = self.prev_cols.load(Ordering::Relaxed);
+        let go_up = if pc == 0 {
+            1 // first render: cursor is on the blank bar-slot line, go up 1 to profile slot
+        } else {
+            let old_per_line = pc.saturating_sub(1).div_ceil(cols).max(1);
+            2 * old_per_line - 1
+        };
+
+        let same_width_redraw = pc == cols && pc != 0;
+        let previous_render = self
+            .last_rendered
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone());
+        let (profile_changed, bar_changed) = previous_render
+            .as_ref()
+            .map_or((true, true), |(prev_profile, prev_bar)| {
+                (prev_profile != &profile_line, prev_bar != &bar_line)
+            });
+
+        if same_width_redraw && !profile_changed && !bar_changed {
+            self.prev_cols.store(cols, Ordering::Relaxed);
+            return;
+        }
+
+        let mut o = self.out.lock().unwrap();
+        for _ in 0..go_up {
+            write!(o, "\x1b[1A").ok();
+        }
+        if same_width_redraw {
+            // On stable-width redraws, leave the profile line alone unless it
+            // actually changed. This avoids visible flicker on Windows
+            // terminals where the second-to-last line can flash even with 2K.
+            if profile_changed {
+                write!(o, "\r\x1b[2K{profile_line}\n").ok();
+            } else {
+                write!(o, "\r\n").ok();
+            }
+            if bar_changed {
+                write!(o, "\r\x1b[2K{bar_line}").ok();
+            }
+        } else {
+            write!(o, "\r\x1b[J{profile_line}\n\r{bar_line}").ok();
+        }
+        o.flush().ok();
+
+        self.prev_cols.store(cols, Ordering::Relaxed);
+        if let Ok(mut last) = self.last_rendered.lock() {
+            *last = Some((profile_line, bar_line));
+        }
+    }
+}

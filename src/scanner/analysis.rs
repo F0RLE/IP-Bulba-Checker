@@ -1,0 +1,1476 @@
+use crate::service_profiles;
+use crate::signatures;
+use std::collections::BTreeSet;
+use std::net::IpAddr;
+
+use super::TransportErrorKind;
+use super::types::{
+    DomainStatus, Evidence, EvidenceBundle, NetworkEvidence, ProbeStatus, RoutingDecision,
+    ScanPolicy, ScanResult, Verdict, build_scan_result, path_from_url_like, routing_decision_for,
+    with_evidence,
+};
+
+const INFRA_DOMAIN_MARKERS: &[&str] = &[
+    "akamai",
+    "akamaiedge",
+    "amazonaws",
+    "analytics",
+    "app-measurement",
+    "app-analytics",
+    "appsflyersdk",
+    "apple-dns",
+    "aaplimg",
+    "azureedge",
+    "azurewebsites",
+    "cdn",
+    "cloudflare-dns",
+    "cloudfront",
+    "dns.google",
+    "doubleclick",
+    "edgekey",
+    "edgesuite",
+    "fastly",
+    "ggpht",
+    "googleadservices",
+    "googleapis",
+    "googletagmanager",
+    "googleusercontent",
+    "googlevideo",
+    "gstatic",
+    "gvt1",
+    "gvt2",
+    "img",
+    "measurement",
+    "msftconnecttest",
+    "msftncsi",
+    "static",
+    "trafficmanager",
+    "windowsupdate",
+    "ytimg",
+];
+
+const NON_CONSUMER_PLATFORM_MARKERS: &[&str] = &[
+    "a2z",
+    "amazon.dev",
+    "aws.dev",
+    "azure",
+    "microsoftonline",
+    "windows.net",
+];
+
+const CONSUMER_DOMAIN_MARKERS: &[&str] = &[
+    "avast",
+    "chatgpt",
+    "facebook",
+    "instagram",
+    "linkedin",
+    "netflix",
+    "playstation",
+    "roblox",
+    "samsung",
+    "sentry",
+    "spotify",
+    "tiktok",
+    "whatsapp",
+    "youtube",
+];
+
+/// Adjust confidence based on the service profile match for the domain.
+///
+/// - Known service with `browser_verification = true` → +5 for geo/captcha verdicts.
+///   These services actively challenge non-target-region users, so our signal is reliable.
+/// - Unknown domain (no profile match) → −10 for WAF verdict.
+///   WAF signatures on unmapped domains are noisier; pull them toward `ManualReview` threshold.
+pub(crate) fn apply_profile_confidence_adjustment(
+    domain: &str,
+    mut result: ScanResult,
+) -> ScanResult {
+    match service_profiles::match_target(domain) {
+        Some(profile) if profile.browser_verification => {
+            if matches!(result.verdict, Verdict::GeoBlocked | Verdict::Captcha) {
+                result.confidence = result.confidence.saturating_add(5).min(99);
+                result.routing_decision = routing_decision_for(result.verdict, result.confidence);
+            }
+        }
+        None => {
+            if result.verdict == Verdict::WafBlocked {
+                result.confidence = result.confidence.saturating_sub(10);
+                result.routing_decision = routing_decision_for(result.verdict, result.confidence);
+            }
+        }
+        _ => {}
+    }
+    result
+}
+
+pub(crate) fn is_block_status(code: u16) -> bool {
+    matches!(code, 403 | 418 | 429 | 451)
+}
+
+pub(crate) fn verdict_from_block_type(block_type: signatures::BlockType) -> Verdict {
+    match block_type {
+        signatures::BlockType::Geo => Verdict::GeoBlocked,
+        signatures::BlockType::Waf | signatures::BlockType::Unknown => Verdict::WafBlocked,
+        signatures::BlockType::Captcha => Verdict::Captcha,
+        signatures::BlockType::Api => Verdict::ApiBlocked,
+        signatures::BlockType::Isp => Verdict::NetworkBlocked,
+        signatures::BlockType::Limit => Verdict::RateLimited,
+        signatures::BlockType::Dead => Verdict::Unreachable,
+    }
+}
+
+fn challenge_family_from_text(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    let families = [
+        (
+            "cloudflare_turnstile",
+            &["cf-turnstile", "turnstile", "cf-mitigated"][..],
+        ),
+        (
+            "cloudflare_challenge",
+            &[
+                "challenge-platform",
+                "cf-challenge",
+                "cf-browser-verification",
+                "checking your browser",
+                "just a moment",
+            ][..],
+        ),
+        ("aws_waf", &["x-amzn-waf-action"][..]),
+        ("datadome", &["datadome", "captcha-delivery"][..]),
+        ("perimeterx", &["px-captcha", "px-cdn.net"][..]),
+        ("kasada", &["kasada", "kpf-challenge"][..]),
+        ("ddos_guard", &["ddos-guard", "__ddg"][..]),
+        ("recaptcha", &["g-recaptcha", "recaptcha/api2"][..]),
+        ("hcaptcha", &["hcaptcha"][..]),
+        ("funcaptcha", &["funcaptcha", "arkoselabs"][..]),
+        ("geetest", &["geetest"][..]),
+    ];
+
+    families.iter().find_map(|(family, needles)| {
+        needles
+            .iter()
+            .any(|needle| lower.contains(needle))
+            .then_some(*family)
+    })
+}
+
+pub(crate) fn infer_challenge_family(result: &ScanResult) -> Option<&'static str> {
+    if !matches!(result.verdict, Verdict::Captcha | Verdict::WafBlocked) {
+        return None;
+    }
+
+    result
+        .evidence
+        .signal
+        .as_deref()
+        .and_then(challenge_family_from_text)
+        .or_else(|| challenge_family_from_text(&result.reason))
+        .or_else(|| {
+            result
+                .evidence
+                .title
+                .as_deref()
+                .and_then(challenge_family_from_text)
+        })
+}
+
+pub(crate) fn status_from_verdict(verdict: Verdict) -> DomainStatus {
+    match verdict {
+        Verdict::Accessible => DomainStatus::Ok,
+        Verdict::TlsFailure | Verdict::Unreachable => DomainStatus::Dead,
+        Verdict::GeoBlocked
+        | Verdict::WafBlocked
+        | Verdict::Captcha
+        | Verdict::RateLimited
+        | Verdict::ApiBlocked
+        | Verdict::NetworkBlocked
+        | Verdict::UnexpectedStatus => DomainStatus::Blocked,
+    }
+}
+
+pub(crate) fn classify_status_code(code: u16) -> Option<Evidence> {
+    if !is_block_status(code) {
+        return None;
+    }
+
+    let (verdict, block_type, confidence) = match code {
+        451 => (Verdict::GeoBlocked, Some(signatures::BlockType::Geo), 95),
+        429 => (Verdict::RateLimited, Some(signatures::BlockType::Limit), 90),
+        418 => (Verdict::WafBlocked, Some(signatures::BlockType::Waf), 70),
+        403 => (Verdict::WafBlocked, Some(signatures::BlockType::Waf), 72),
+        400 | 401 | 404 | 405 => (Verdict::UnexpectedStatus, None, 60),
+        _ => return None,
+    };
+
+    Some(Evidence {
+        verdict,
+        reason: format!("HTTP {code}"),
+        block_type,
+        confidence,
+    })
+}
+
+fn classify_challenge_headers(headers: &[(String, String)]) -> Option<Evidence> {
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.to_ascii_lowercase())
+    };
+
+    if header("cf-mitigated").as_deref() == Some("challenge") {
+        return Some(Evidence {
+            verdict: Verdict::Captcha,
+            reason: "Header: cf-mitigated=challenge".to_string(),
+            block_type: Some(signatures::BlockType::Captcha),
+            confidence: 94,
+        });
+    }
+
+    if let Some(action) = header("x-amzn-waf-action")
+        && matches!(action.as_str(), "captcha" | "challenge")
+    {
+        return Some(Evidence {
+            verdict: Verdict::Captcha,
+            reason: format!("Header: x-amzn-waf-action={action}"),
+            block_type: Some(signatures::BlockType::Captcha),
+            confidence: 92,
+        });
+    }
+
+    None
+}
+
+pub(crate) fn classify_redirect(url: &str) -> Option<Evidence> {
+    let lower = url.to_ascii_lowercase();
+    let parsed = url::Url::parse(url).ok();
+
+    let path = parsed
+        .as_ref()
+        .map(|u| u.path().to_ascii_lowercase())
+        .unwrap_or_default();
+    let host = parsed
+        .as_ref()
+        .and_then(|u| u.host_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let is_captcha = host.contains("captcha")
+        || host.contains("challenge")
+        || path.starts_with("/cdn-cgi/challenge")
+        || path == "/challenge"
+        || path == "/captcha"
+        || path.starts_with("/captcha-delivery")
+        || lower.contains("google.com/sorry");
+
+    if is_captcha {
+        return Some(Evidence {
+            verdict: Verdict::Captcha,
+            reason: format!("Redirect: {url}"),
+            block_type: Some(signatures::BlockType::Captcha),
+            confidence: 82,
+        });
+    }
+
+    let patterns = [
+        "geo-",
+        "not-available",
+        "not-supported",
+        "servicerestricted",
+        "access-denied",
+        "warning.rt.ru",
+        "internet-filter-response",
+        "rkn-block",
+        "rkn.gov.ru",
+        "zapret-info",
+        "eais.rkn",
+        "roscomnadzor",
+        "beltelecom.by/blocked",
+        "belpak.by/block",
+        "oac.gov.by",
+    ];
+
+    let matched = patterns.iter().find(|pattern| lower.contains(**pattern))?;
+
+    let (verdict, block_type, confidence) = if matches!(
+        *matched,
+        "warning.rt.ru"
+            | "internet-filter-response"
+            | "rkn-block"
+            | "rkn.gov.ru"
+            | "zapret-info"
+            | "eais.rkn"
+            | "roscomnadzor"
+            | "beltelecom.by/blocked"
+            | "belpak.by/block"
+            | "oac.gov.by"
+    ) {
+        (Verdict::NetworkBlocked, signatures::BlockType::Isp, 93)
+    } else {
+        (Verdict::GeoBlocked, signatures::BlockType::Geo, 80)
+    };
+
+    Some(Evidence {
+        verdict,
+        reason: format!("Redirect: {url}"),
+        block_type: Some(block_type),
+        confidence,
+    })
+}
+
+/// Check a redirect chain for any blocking patterns.
+/// Returns the first match found in the chain (from first to last redirect).
+/// Intermediate redirects may contain block signals before the final URL.
+#[allow(dead_code)]
+pub(crate) fn classify_redirect_chain(redirects: &[String]) -> Option<Evidence> {
+    for url in redirects {
+        if let Some(ev) = classify_redirect(url) {
+            return Some(ev);
+        }
+    }
+    None
+}
+
+pub(crate) fn make_signal(
+    prefix: &str,
+    sig: &str,
+    btype: signatures::BlockType,
+    confidence: u8,
+) -> Evidence {
+    Evidence {
+        verdict: verdict_from_block_type(btype),
+        reason: format!("{prefix}: {sig}"),
+        block_type: Some(btype),
+        confidence,
+    }
+}
+
+pub(crate) fn choose_better_signal(current: &mut Option<Evidence>, candidate: Evidence) {
+    match current {
+        Some(existing) => {
+            let current_priority = existing
+                .block_type
+                .map_or(0, signatures::BlockType::report_priority);
+            let candidate_priority = candidate
+                .block_type
+                .map_or(0, signatures::BlockType::report_priority);
+
+            if candidate.confidence > existing.confidence
+                || (candidate.confidence == existing.confidence
+                    && candidate_priority > current_priority)
+            {
+                *current = Some(candidate);
+            }
+        }
+        None => *current = Some(candidate),
+    }
+}
+
+pub(crate) fn classify_transport_error(error: &str) -> TransportErrorKind {
+    let err = error.to_lowercase();
+
+    if err.contains("certificate")
+        || err.contains(" cert ")
+        || err.contains("tls")
+        || err.contains("ssl")
+        || err.contains("handshake")
+        || err.contains("hostname mismatch")
+    {
+        return TransportErrorKind::TlsFailure;
+    }
+
+    if err.contains("connection reset")
+        || err.contains("reset by peer")
+        || err.contains("forcibly closed")
+        || err.contains("unexpected eof")
+        || err.contains("broken pipe")
+        || err.contains("connection aborted")
+    {
+        return TransportErrorKind::BlockedByNetwork;
+    }
+
+    TransportErrorKind::Unreachable
+}
+
+fn normalized_host(domain: &str) -> String {
+    domain
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(domain)
+        .to_ascii_lowercase()
+}
+
+fn match_domain_marker(host: &str, markers: &[&str]) -> bool {
+    markers.iter().any(|&marker| {
+        if marker.contains('.') {
+            host == marker || host.ends_with(&format!(".{marker}"))
+        } else {
+            host.split('.')
+                .any(|label| label == marker || label.starts_with(&format!("{marker}-")))
+        }
+    })
+}
+
+fn is_infra_like_domain(domain: &str) -> bool {
+    match_domain_marker(&normalized_host(domain), INFRA_DOMAIN_MARKERS)
+}
+
+fn is_non_consumer_platform_domain(domain: &str) -> bool {
+    match_domain_marker(&normalized_host(domain), NON_CONSUMER_PLATFORM_MARKERS)
+}
+
+fn is_consumer_like_domain(domain: &str) -> bool {
+    match_domain_marker(&normalized_host(domain), CONSUMER_DOMAIN_MARKERS)
+}
+
+pub(crate) fn relax_infra_root_result(mut result: ScanResult) -> ScanResult {
+    if result.service.is_some()
+        || result.evidence.path.as_deref() != Some("/")
+        || is_consumer_like_domain(&result.domain)
+        || (!is_infra_like_domain(&result.domain)
+            && !is_non_consumer_platform_domain(&result.domain))
+    {
+        return result;
+    }
+
+    match result.verdict {
+        Verdict::UnexpectedStatus if matches!(result.http_status, Some(400 | 404 | 405 | 421)) => {
+            let status = result.http_status.unwrap_or_default();
+            let reason =
+                format!("infra apex returned HTTP {status}; treating as non-proxyable root");
+            result.status = DomainStatus::Ok;
+            result.verdict = Verdict::Accessible;
+            result.routing_decision = RoutingDecision::DirectOk;
+            result.confidence = 68;
+            result.reason.clone_from(&reason);
+            result.block_type = None;
+            result.evidence.signal = Some(reason);
+            result
+        }
+        Verdict::Unreachable | Verdict::TlsFailure => {
+            let reason =
+                "infra apex is not reliably probeable as a standalone web target".to_string();
+            result.status = DomainStatus::Ok;
+            result.verdict = Verdict::Accessible;
+            result.routing_decision = RoutingDecision::DirectOk;
+            result.confidence = 62;
+            result.reason.clone_from(&reason);
+            result.block_type = None;
+            result.evidence.signal = Some(reason);
+            result
+        }
+        _ => result,
+    }
+}
+
+pub(crate) fn is_transient_error(error: &str) -> bool {
+    let err = error.to_lowercase();
+    err.contains("timed out")
+        || err.contains("timeout")
+        || err.contains("tempor")
+        || err.contains("refused")
+        || err.contains("dns")
+        || err.contains("name or service not known")
+        || err.contains("could not resolve")
+        || err.contains("no such host")
+}
+
+fn parse_ip_detail_set(detail: Option<&str>) -> BTreeSet<IpAddr> {
+    detail
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|part| part.trim().parse::<IpAddr>().ok())
+        .collect()
+}
+
+fn annotate_reason(reason: &str, note: &str) -> String {
+    if reason.contains(note) {
+        reason.to_string()
+    } else {
+        format!("{reason} | {note}")
+    }
+}
+
+fn annotate_signal(existing: Option<String>, note: String) -> String {
+    match existing {
+        Some(existing) if existing.contains(&note) => existing,
+        Some(existing) => format!("{existing}; {note}"),
+        None => note,
+    }
+}
+
+fn dns_failure_kind(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    detail
+        .strip_prefix("kind=")
+        .and_then(|rest| rest.split_whitespace().next())
+}
+
+fn resolver_health_note(detail: Option<&str>) -> Option<&str> {
+    let detail = detail?;
+    [
+        "resolver_control_ok",
+        "resolver_control_empty",
+        "resolver_control_timeout",
+        "resolver_control_servfail",
+        "resolver_control_nxdomain",
+        "resolver_control_nodata",
+        "resolver_control_refused",
+        "resolver_control_failed",
+        "resolver_control_unknown",
+    ]
+    .into_iter()
+    .find(|marker| detail.contains(marker))
+}
+
+pub(crate) fn apply_dns_evidence_adjustment(
+    mut result: ScanResult,
+    network_evidence: &NetworkEvidence,
+) -> ScanResult {
+    if network_evidence.dns.status == ProbeStatus::Skipped
+        || network_evidence.path_dns.status != ProbeStatus::Ok
+    {
+        return result;
+    }
+
+    if network_evidence.dns.status == ProbeStatus::Failed {
+        let dns_detail = network_evidence.dns.detail.as_deref();
+        let kind = dns_failure_kind(dns_detail).unwrap_or("failed");
+        let resolver_health = resolver_health_note(dns_detail);
+        let note = format!("system DNS {kind} while DoH resolved");
+        result.reason = annotate_reason(&result.reason, &note);
+        result.evidence.signal = Some(annotate_signal(result.evidence.signal.take(), note.clone()));
+
+        let strong_dns_failure = matches!(kind, "nxdomain" | "servfail" | "timeout" | "refused");
+        let supports_block_promotion = matches!(resolver_health, Some("resolver_control_ok"));
+
+        if strong_dns_failure && !supports_block_promotion {
+            if matches!(
+                resolver_health,
+                Some(
+                    "resolver_control_timeout"
+                        | "resolver_control_servfail"
+                        | "resolver_control_failed"
+                        | "resolver_control_unknown"
+                )
+            ) {
+                result.reason = annotate_reason(
+                    &result.reason,
+                    "local resolver appears unhealthy; DNS-only signal is not sufficient to confirm blocking",
+                );
+            }
+            return result;
+        }
+
+        if strong_dns_failure
+            && matches!(
+                result.verdict,
+                Verdict::Unreachable
+                    | Verdict::TlsFailure
+                    | Verdict::UnexpectedStatus
+                    | Verdict::NetworkBlocked
+            )
+        {
+            result.status = DomainStatus::Blocked;
+            result.verdict = Verdict::NetworkBlocked;
+            result.confidence = result.confidence.max(92);
+            result.routing_decision = routing_decision_for(result.verdict, result.confidence);
+        }
+
+        return result;
+    }
+
+    if network_evidence.dns.status != ProbeStatus::Ok {
+        return result;
+    }
+
+    let system_dns = parse_ip_detail_set(network_evidence.dns.detail.as_deref());
+    let doh_dns = parse_ip_detail_set(network_evidence.path_dns.detail.as_deref());
+    if system_dns.is_empty() || doh_dns.is_empty() {
+        return result;
+    }
+
+    let overlap = system_dns
+        .intersection(&doh_dns)
+        .copied()
+        .collect::<Vec<_>>();
+
+    if overlap.is_empty() {
+        let tcp_failed = network_evidence.tcp_443.status != ProbeStatus::Ok;
+        let tls_failed = network_evidence.tls_443.status != ProbeStatus::Ok;
+        let note = format!(
+            "system DNS differs from DoH: system={} doh={}",
+            network_evidence.dns.detail.as_deref().unwrap_or_default(),
+            network_evidence
+                .path_dns
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+        );
+        result.reason = annotate_reason(&result.reason, &note);
+        result.evidence.signal = Some(annotate_signal(result.evidence.signal.take(), note));
+
+        if (tcp_failed || tls_failed)
+            && matches!(
+                result.verdict,
+                Verdict::Unreachable
+                    | Verdict::TlsFailure
+                    | Verdict::UnexpectedStatus
+                    | Verdict::NetworkBlocked
+            )
+        {
+            result.status = DomainStatus::Blocked;
+            result.verdict = Verdict::NetworkBlocked;
+            result.confidence = result.confidence.max(89);
+            result.routing_decision = routing_decision_for(result.verdict, result.confidence);
+            result.reason = annotate_reason(
+                &result.reason,
+                "mismatched system DNS answer also failed on direct TCP/TLS probes",
+            );
+        }
+    }
+
+    result
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) fn analyze_http_observation(
+    domain: String,
+    matcher: &signatures::BlockMatcher,
+    status_code: u16,
+    status_label: &str,
+    final_url: &str,
+    headers: &[(String, String)],
+    body_raw: &[u8],
+    _verbose: bool,
+) -> ScanResult {
+    let mut best_signal: Option<Evidence> = None;
+    let mut signals = Vec::new();
+    let body_text = String::from_utf8_lossy(body_raw).into_owned();
+    let title = extract_title(&body_text);
+    let path = path_from_url_like(final_url);
+
+    if let Some(signal) = classify_challenge_headers(headers) {
+        choose_better_signal(&mut best_signal, signal.clone());
+        signals.push(signal);
+    }
+
+    // ── Quick Win #1: Status-gated header scoring ──────────────────
+    // On 200 OK, CDN-presence headers are informational (confidence 35,
+    // well below the should_block threshold of 88). On error status codes
+    // (403/429/503 etc.) the full confidence 84 applies.
+    if let Some((sig, btype)) = matcher.find_header_pairs(headers) {
+        let header_confidence = if (200..300).contains(&status_code) {
+            35
+        } else {
+            84
+        };
+        let signal = make_signal("Header", &sig, btype, header_confidence);
+        choose_better_signal(&mut best_signal, signal.clone());
+        signals.push(signal);
+    }
+
+    if let Some(signal) = classify_redirect(final_url) {
+        choose_better_signal(&mut best_signal, signal.clone());
+        signals.push(signal);
+    }
+
+    // ── Quick Win #2 & #3: Body scan gating ──────────────────────
+    // Skip body signature scan when:
+    // - HTTP 429 (rate-limit page often contains WAF-like patterns)
+    // - 200 OK with body size dynamically checked against Content-Type
+    let is_binary = headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-type") && {
+            let lower = v.to_ascii_lowercase();
+            // Skip 100% of large binaries
+            lower.contains("image/")
+                || lower.contains("video/")
+                || lower.contains("audio/")
+                || lower.contains("application/octet-stream")
+                || lower.contains("application/zip")
+                || lower.contains("application/pdf")
+                || lower.contains("font/")
+        }
+    });
+
+    let is_text = headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-type") && {
+            let lower = v.to_ascii_lowercase();
+            // Scan text up to 100KB if the profile specifically expects large WAF pages
+            lower.contains("text/")
+                || lower.contains("application/json")
+                || lower.contains("application/xml")
+        }
+    });
+
+    let skip_body_scan = if status_code == 429 {
+        true
+    } else if (200..300).contains(&status_code) {
+        if is_binary {
+            true
+        } else if is_text {
+            body_raw.len() > 102_400
+        } else {
+            body_raw.len() > 32_768
+        }
+    } else {
+        false
+    };
+
+    if !skip_body_scan {
+        if let Some((sig, btype)) = matcher.find_api_text(&body_text) {
+            let signal = make_signal("API", &sig, btype, 95);
+            choose_better_signal(&mut best_signal, signal.clone());
+            signals.push(signal);
+        }
+        if let Some((sig, btype)) = matcher.find_body_text(&body_text) {
+            let mut confidence: u8 = match btype {
+                signatures::BlockType::Captcha => 92,
+                signatures::BlockType::Geo => 93,
+                signatures::BlockType::Waf => 88,
+                signatures::BlockType::Isp | signatures::BlockType::Api => 90,
+                signatures::BlockType::Limit => 85,
+                signatures::BlockType::Dead => 80,
+                signatures::BlockType::Unknown => 65,
+            };
+
+            // ── DOM-Aware Scoring ─────────────────────────────────
+            // Boost confidence if the signature appears in the <title>
+            if let Some(t) = &title
+                && t.to_lowercase().contains(&sig.to_lowercase())
+            {
+                confidence = confidence.saturating_add(5).min(98);
+            }
+
+            let signal = make_signal("Match", &sig, btype, confidence);
+            choose_better_signal(&mut best_signal, signal.clone());
+            signals.push(signal);
+        }
+    }
+
+    if let Some(mut signal) = classify_status_code(status_code) {
+        let mut reason = format!("HTTP {status_code} {status_label}");
+        if status_code == 429
+            && let Some((_, val)) = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("retry-after"))
+        {
+            reason = format!("{reason} | retry-after={val}");
+        }
+        signal.reason = reason;
+        choose_better_signal(&mut best_signal, signal.clone());
+        signals.push(signal);
+    }
+
+    if let Some(signal) = best_signal {
+        let verdict_consensus = signals
+            .iter()
+            .filter(|candidate| candidate.verdict == signal.verdict)
+            .count();
+        let explicit_geo = signal.verdict == Verdict::GeoBlocked
+            && (signal.reason.contains("your region")
+                || signal.reason.contains("your country")
+                || signal.reason.contains("certain regions")
+                || signal.reason.contains("app unavailable in region")
+                || signal.reason.contains("boq-bard-web"));
+        let non_success = !(200..300).contains(&status_code);
+        let status_supports_block = is_block_status(status_code);
+
+        let should_block = signal.confidence >= 88
+            || (verdict_consensus >= 2 && signal.confidence >= 70)
+            || explicit_geo
+            || (non_success && status_supports_block && signal.confidence >= 70);
+
+        if should_block {
+            return apply_profile_confidence_adjustment(
+                &domain.clone(),
+                relax_infra_root_result(with_evidence(
+                    build_scan_result(
+                        domain,
+                        status_from_verdict(signal.verdict),
+                        signal.verdict,
+                        signal.confidence,
+                        Some(status_code),
+                        signal.reason.clone(),
+                        signal.block_type,
+                    ),
+                    EvidenceBundle {
+                        source: Some("http".to_string()),
+                        path,
+                        final_url: Some(final_url.to_string()),
+                        title,
+                        signal: Some(signal.reason),
+                    },
+                )),
+            );
+        }
+    }
+
+    if !(200..300).contains(&status_code) {
+        // Bare 502/503/504 are upstream/service failures by HTTP semantics and
+        // are too noisy to treat as network censorship without corroborating signals.
+        let (isp_verdict, isp_block_type, isp_confidence) = (Verdict::UnexpectedStatus, None, 60u8);
+        let reason = format!("HTTP {status_code} {status_label} without block signature");
+        return relax_infra_root_result(with_evidence(
+            build_scan_result(
+                domain,
+                DomainStatus::Blocked,
+                isp_verdict,
+                isp_confidence,
+                Some(status_code),
+                reason.clone(),
+                isp_block_type,
+            ),
+            EvidenceBundle {
+                source: Some("http".to_string()),
+                path,
+                final_url: Some(final_url.to_string()),
+                title,
+                signal: Some(reason),
+            },
+        ));
+    }
+
+    let reason = format!("OK ({status_label})");
+    relax_infra_root_result(with_evidence(
+        build_scan_result(
+            domain,
+            DomainStatus::Ok,
+            Verdict::Accessible,
+            85,
+            Some(status_code),
+            reason.clone(),
+            None,
+        ),
+        EvidenceBundle {
+            source: Some("http".to_string()),
+            path,
+            final_url: Some(final_url.to_string()),
+            title,
+            signal: Some(reason),
+        },
+    ))
+}
+
+pub(crate) fn verdict_rank(result: &ScanResult) -> (u8, u8) {
+    let rank = match result.verdict {
+        Verdict::GeoBlocked => 10,
+        Verdict::ApiBlocked => 9,
+        Verdict::NetworkBlocked => 8,
+        Verdict::WafBlocked => 7,
+        Verdict::Captcha => 6,
+        Verdict::RateLimited => 5,
+        Verdict::UnexpectedStatus => 4,
+        Verdict::Accessible => 3,
+        Verdict::TlsFailure | Verdict::Unreachable => 2,
+    };
+
+    (rank, result.confidence)
+}
+
+fn scan_identity(result: &ScanResult) -> String {
+    format!(
+        "{}/{}",
+        super::verdict_label(result.verdict),
+        super::routing_decision_label(result.routing_decision)
+    )
+}
+
+pub(crate) fn same_measurement(a: &ScanResult, b: &ScanResult) -> bool {
+    a.status == b.status
+        && a.verdict == b.verdict
+        && a.routing_decision == b.routing_decision
+        && a.http_status == b.http_status
+}
+
+pub(crate) fn should_try_retest(result: &ScanResult, scan_policy: ScanPolicy) -> bool {
+    if scan_policy.retest_attempts == 0 {
+        return false;
+    }
+
+    matches!(
+        result.verdict,
+        Verdict::GeoBlocked
+            | Verdict::ApiBlocked
+            | Verdict::NetworkBlocked
+            | Verdict::UnexpectedStatus
+            | Verdict::TlsFailure
+            | Verdict::Unreachable
+    )
+}
+
+pub(crate) fn stabilize_scan_attempts(attempts: Vec<ScanResult>) -> ScanResult {
+    if attempts.len() == 1 {
+        return attempts.into_iter().next().expect("one attempt");
+    }
+
+    let stable = attempts
+        .windows(2)
+        .all(|window| same_measurement(&window[0], &window[1]));
+
+    if stable {
+        let mut chosen = attempts
+            .into_iter()
+            .max_by_key(verdict_rank)
+            .expect("stable attempts are not empty");
+        // Boost confidence for stable multiple observations
+        chosen.confidence = chosen.confidence.saturating_add(3).min(99);
+        // Annotate reason only — evidence.signal stays clean for machine use
+        chosen.reason = format!("{} | retest=stable", chosen.reason);
+        return chosen;
+    }
+
+    // ── Multi-probe consensus ───────────────────────────────────────────────
+    // For ambiguous results (confidence 60–85) require a majority vote (≥2/3)
+    // before accepting the winning verdict. Without a clear majority → ManualReview.
+    let n = attempts.len();
+    if n >= 3 {
+        // Count verdict+routing pairs
+        let mut counts: std::collections::HashMap<(Verdict, RoutingDecision), usize> =
+            std::collections::HashMap::new();
+        for a in &attempts {
+            *counts.entry((a.verdict, a.routing_decision)).or_default() += 1;
+        }
+        let majority_threshold = (n * 2).div_ceil(3);
+        if let Some(((majority_verdict, majority_routing), _)) =
+            counts.iter().find(|(_, cnt)| **cnt >= majority_threshold)
+        {
+            // Use .iter().cloned() so `attempts` is not moved and remains usable below.
+            if let Some(mut chosen) = attempts
+                .iter()
+                .filter(|a| {
+                    a.verdict == *majority_verdict && a.routing_decision == *majority_routing
+                })
+                .max_by_key(|a| verdict_rank(a))
+                .cloned()
+            {
+                chosen.confidence = chosen.confidence.saturating_add(3).min(99);
+                chosen.routing_decision = routing_decision_for(chosen.verdict, chosen.confidence);
+                chosen.reason = format!("{} | retest=consensus", chosen.reason);
+                return chosen;
+            }
+        }
+    }
+
+    // No majority — fall back to ManualReview on the worst observed result
+    let mut chosen = attempts
+        .iter()
+        .filter(|attempt| attempt.verdict != Verdict::Accessible)
+        .max_by_key(|attempt| verdict_rank(attempt))
+        .cloned()
+        .unwrap_or_else(|| attempts[0].clone());
+    let attempt_labels = attempts
+        .iter()
+        .map(scan_identity)
+        .collect::<Vec<_>>()
+        .join(" -> ");
+
+    chosen.routing_decision = RoutingDecision::ManualReview;
+    // Do not lower confidence here — the chosen result's confidence already reflects
+    // the worst-case observation. Lowering it further produces misleading numbers.
+    chosen.reason = format!("{} | retest=unstable [{attempt_labels}]", chosen.reason);
+    // evidence.signal stays clean (no retest annotation) for downstream machine use
+    chosen
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+pub(crate) fn extract_title(html: &str) -> Option<String> {
+    let start = find_ascii_case_insensitive(html, "<title>")?;
+    let content_start = start + "<title>".len();
+    let rel_end = find_ascii_case_insensitive(&html[content_start..], "</title>")?;
+    Some(
+        html[content_start..content_start + rel_end]
+            .trim()
+            .to_string(),
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn classify_browser_html(
+    domain: &str,
+    matcher: &signatures::BlockMatcher,
+    html: &str,
+) -> Option<ScanResult> {
+    let lower = html.to_lowercase();
+    let title = extract_title(html).unwrap_or_default();
+    let title_lower = title.to_lowercase();
+
+    let direct_geo = [
+        "app unavailable in region",
+        "not available in your region",
+        "not supported in your region",
+        "not available in your country",
+        "claude isn't available here",
+    ];
+    if direct_geo
+        .iter()
+        .any(|needle| lower.contains(needle) || title_lower.contains(needle))
+    {
+        let reason = if title.is_empty() {
+            "Browser DOM: strong geo restriction marker".to_string()
+        } else {
+            format!("Browser DOM title: {title}")
+        };
+        return Some(with_evidence(
+            build_scan_result(
+                domain.to_string(),
+                DomainStatus::Blocked,
+                Verdict::GeoBlocked,
+                99,
+                None,
+                reason.clone(),
+                Some(signatures::BlockType::Geo),
+            ),
+            EvidenceBundle {
+                source: Some("browser_dom".to_string()),
+                path: None,
+                final_url: None,
+                title: (!title.is_empty()).then_some(title.clone()),
+                signal: Some(reason),
+            },
+        ));
+    }
+
+    let strong_waf_markers = [
+        "challenge-platform",
+        "cf-challenge",
+        "/cdn-cgi/challenge-platform",
+        "cf-mitigated",
+        "turnstile",
+    ];
+    let weak_waf_markers = ["just a moment", "one moment", "один момент", "captcha"];
+    let has_strong_waf_marker = strong_waf_markers
+        .iter()
+        .any(|needle| lower.contains(needle) || title_lower.contains(needle));
+    let weak_waf_hits = weak_waf_markers
+        .iter()
+        .filter(|needle| lower.contains(**needle) || title_lower.contains(**needle))
+        .count();
+    let challenge_context = [
+        "verify you are human",
+        "checking your browser",
+        "browser verification",
+        "security check",
+        "enable cookies",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle) || title_lower.contains(needle));
+    if has_strong_waf_marker || (weak_waf_hits >= 2 && challenge_context) {
+        let reason = if title.is_empty() {
+            "Browser DOM: challenge page".to_string()
+        } else {
+            format!("Browser DOM title: {title}")
+        };
+        return Some(with_evidence(
+            build_scan_result(
+                domain.to_string(),
+                DomainStatus::Blocked,
+                Verdict::WafBlocked,
+                97,
+                None,
+                reason.clone(),
+                Some(signatures::BlockType::Waf),
+            ),
+            EvidenceBundle {
+                source: Some("browser_dom".to_string()),
+                path: None,
+                final_url: None,
+                title: (!title.is_empty()).then_some(title.clone()),
+                signal: Some(reason),
+            },
+        ));
+    }
+    if let Some((sig, btype)) = matcher.find_body_text(html) {
+        if btype == signatures::BlockType::Geo
+            && !title.is_empty()
+            && !crate::service_profiles::title_supports_geo(&title_lower)
+        {
+            return None;
+        }
+
+        let confidence = match btype {
+            signatures::BlockType::Geo => 97,
+            signatures::BlockType::Captcha => 96,
+            signatures::BlockType::Waf => 94,
+            signatures::BlockType::Isp | signatures::BlockType::Api => 92,
+            signatures::BlockType::Limit => 88,
+            signatures::BlockType::Dead => 80,
+            signatures::BlockType::Unknown => 70,
+        };
+
+        let reason = format!("Browser DOM: {sig}");
+        return Some(with_evidence(
+            build_scan_result(
+                domain.to_string(),
+                status_from_verdict(verdict_from_block_type(btype)),
+                verdict_from_block_type(btype),
+                confidence,
+                None,
+                reason.clone(),
+                Some(btype),
+            ),
+            EvidenceBundle {
+                source: Some("browser_dom".to_string()),
+                path: None,
+                final_url: None,
+                title: (!title.is_empty()).then_some(title.clone()),
+                signal: Some(reason),
+            },
+        ));
+    }
+
+    None
+}
+#[cfg(test)]
+mod infra_tests {
+    use super::{
+        analyze_http_observation, apply_profile_confidence_adjustment, classify_browser_html,
+        infer_challenge_family, is_consumer_like_domain, is_infra_like_domain,
+        is_non_consumer_platform_domain, relax_infra_root_result, stabilize_scan_attempts,
+    };
+    use crate::scanner::types::build_scan_result;
+    use crate::scanner::{DomainStatus, EvidenceBundle, RoutingDecision, Verdict, with_evidence};
+    use crate::signatures::BlockMatcher;
+
+    #[test]
+    fn detects_known_infra_like_domains() {
+        assert!(is_infra_like_domain("googleapis.com"));
+        assert!(is_infra_like_domain("cloudfront.net"));
+        assert!(!is_infra_like_domain("chatgpt.com"));
+    }
+
+    #[test]
+    fn cf_mitigated_challenge_header_is_classified_as_captcha() {
+        let matcher = BlockMatcher::new(None).unwrap();
+        let result = analyze_http_observation(
+            "example.com".to_string(),
+            &matcher,
+            403,
+            "Forbidden",
+            "https://example.com/",
+            &[("cf-mitigated".to_string(), "challenge".to_string())],
+            b"",
+            false,
+        );
+
+        assert_eq!(result.verdict, Verdict::Captcha);
+        assert_eq!(
+            result.block_type,
+            Some(crate::signatures::BlockType::Captcha)
+        );
+        assert!(result.reason.contains("cf-mitigated"));
+    }
+
+    #[test]
+    fn aws_waf_captcha_header_is_classified_as_captcha() {
+        let matcher = BlockMatcher::new(None).unwrap();
+        let result = analyze_http_observation(
+            "example.com".to_string(),
+            &matcher,
+            405,
+            "Method Not Allowed",
+            "https://example.com/",
+            &[("x-amzn-waf-action".to_string(), "captcha".to_string())],
+            b"",
+            false,
+        );
+
+        assert_eq!(result.verdict, Verdict::Captcha);
+        assert_eq!(
+            result.block_type,
+            Some(crate::signatures::BlockType::Captcha)
+        );
+        assert!(result.reason.contains("x-amzn-waf-action"));
+    }
+
+    #[test]
+    fn unsigned_gateway_errors_stay_unexpected_status_not_network_blocked() {
+        let matcher = BlockMatcher::new(None).unwrap();
+        let result = analyze_http_observation(
+            "example.com".to_string(),
+            &matcher,
+            503,
+            "Service Unavailable",
+            "https://example.com/",
+            &[],
+            b"<html><title>temporary outage</title></html>",
+            false,
+        );
+
+        assert_eq!(result.verdict, Verdict::UnexpectedStatus);
+        assert_eq!(result.routing_decision, RoutingDecision::ManualReview);
+        assert_eq!(result.block_type, None);
+    }
+
+    #[test]
+    fn infers_challenge_family_from_captcha_signal() {
+        let result = with_evidence(
+            build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                Verdict::Captcha,
+                94,
+                Some(403),
+                "Header: cf-mitigated=challenge".to_string(),
+                Some(crate::signatures::BlockType::Captcha),
+            ),
+            EvidenceBundle {
+                source: Some("http".to_string()),
+                path: Some("/".to_string()),
+                final_url: None,
+                title: None,
+                signal: Some("Header: cf-mitigated=challenge".to_string()),
+            },
+        );
+
+        assert_eq!(
+            infer_challenge_family(&result),
+            Some("cloudflare_turnstile")
+        );
+    }
+
+    #[test]
+    fn infers_challenge_family_from_waf_signal() {
+        let result = with_evidence(
+            build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                Verdict::WafBlocked,
+                97,
+                Some(403),
+                "Browser DOM: challenge page".to_string(),
+                Some(crate::signatures::BlockType::Waf),
+            ),
+            EvidenceBundle {
+                source: Some("browser_dom".to_string()),
+                path: Some("/".to_string()),
+                final_url: None,
+                title: Some("Just a moment".to_string()),
+                signal: Some("/cdn-cgi/challenge-platform".to_string()),
+            },
+        );
+
+        assert_eq!(
+            infer_challenge_family(&result),
+            Some("cloudflare_challenge")
+        );
+    }
+
+    #[test]
+    fn distinguishes_consumer_from_non_consumer_domains() {
+        assert!(is_non_consumer_platform_domain("azure.com"));
+        assert!(is_non_consumer_platform_domain("microsoftonline.com"));
+        assert!(is_consumer_like_domain("facebook.com"));
+        assert!(is_consumer_like_domain("playstation.net"));
+        assert!(!is_consumer_like_domain("cloudfront.net"));
+    }
+
+    #[test]
+    fn relaxes_infra_root_unexpected_status_into_direct_ok() {
+        let matcher = BlockMatcher::new(None).unwrap();
+        let result = analyze_http_observation(
+            "googleapis.com".to_string(),
+            &matcher,
+            404,
+            "404 Not Found",
+            "https://googleapis.com/",
+            &[],
+            b"<html><title>Error 404 (Not Found)!!1</title></html>",
+            false,
+        );
+
+        assert_eq!(result.verdict, Verdict::Accessible);
+        assert_eq!(result.routing_decision, RoutingDecision::DirectOk);
+        assert!(result.reason.contains("infra apex"));
+    }
+
+    #[test]
+    fn relaxes_infra_root_transport_failure_into_direct_ok() {
+        let result = relax_infra_root_result(with_evidence(
+            build_scan_result(
+                "cloudfront.net".to_string(),
+                DomainStatus::Dead,
+                Verdict::Unreachable,
+                55,
+                None,
+                "client error (Connect)".to_string(),
+                None,
+            ),
+            EvidenceBundle {
+                source: Some("transport".to_string()),
+                path: Some("/".to_string()),
+                final_url: Some("https://cloudfront.net".to_string()),
+                title: None,
+                signal: Some("client error (Connect)".to_string()),
+            },
+        ));
+
+        assert_eq!(result.verdict, Verdict::Accessible);
+        assert_eq!(result.routing_decision, RoutingDecision::DirectOk);
+        assert!(result.reason.contains("infra apex"));
+    }
+
+    #[test]
+    fn browser_challenge_requires_strong_or_multiple_markers() {
+        let matcher = BlockMatcher::new(None).unwrap();
+
+        let weak_only = classify_browser_html(
+            "facebook.com",
+            &matcher,
+            "<html><title>Facebook</title><body>captcha support docs</body></html>",
+        );
+        assert!(weak_only.is_none());
+
+        let strong_marker = classify_browser_html(
+            "chatgpt.com",
+            &matcher,
+            "<html><title>One moment</title><script src=\"/cdn-cgi/challenge-platform\"></script></html>",
+        )
+        .unwrap();
+        assert_eq!(strong_marker.verdict, Verdict::WafBlocked);
+
+        let weak_but_contextless = classify_browser_html(
+            "example.com",
+            &matcher,
+            "<html><title>One moment</title><body>captcha troubleshooting guide</body></html>",
+        );
+        assert!(weak_but_contextless.is_none());
+    }
+
+    #[test]
+    fn browser_geo_body_match_requires_title_support() {
+        let matcher = BlockMatcher::new(None).unwrap();
+
+        let ambiguous = classify_browser_html(
+            "tiktok.com",
+            &matcher,
+            "<html><title>Интересное — Ищите и смотрите свои любимые видео в TikTok</title><body>не поддерживается в вашем регионе</body></html>",
+        );
+        assert!(ambiguous.is_none());
+    }
+
+    #[test]
+    fn detects_new_infra_markers_fastly_edgekey_azure() {
+        assert!(is_infra_like_domain("global.prod.fastly.net"));
+        assert!(is_infra_like_domain("e12345.x.edgekey.net"));
+        assert!(is_infra_like_domain("myapp.azurewebsites.net"));
+        assert!(is_infra_like_domain("assets.azureedge.net"));
+        assert!(is_infra_like_domain("e4321.g.edgesuite.net"));
+        // Consumer domains must not be mistakenly infra-classified
+        assert!(!is_infra_like_domain("netflix.com"));
+        assert!(!is_infra_like_domain("chatgpt.com"));
+    }
+
+    #[test]
+    fn profile_confidence_adjustment_boosts_geo_for_browser_verification_services() {
+        use crate::scanner::types::{DomainStatus, build_scan_result};
+
+        // OpenAI has browser_verification = true — geo confidence should increase
+        let result = build_scan_result(
+            "chat.openai.com".to_string(),
+            DomainStatus::Blocked,
+            Verdict::GeoBlocked,
+            88,
+            Some(403),
+            "HTTP 403".to_string(),
+            Some(crate::signatures::BlockType::Geo),
+        );
+        let adjusted = apply_profile_confidence_adjustment("chat.openai.com", result);
+        assert_eq!(
+            adjusted.confidence, 93,
+            "geo confidence for browser_verification service should be +5"
+        );
+
+        // Unknown domain WAF confidence should decrease
+        let waf_result = build_scan_result(
+            "unknown-random-site.example".to_string(),
+            DomainStatus::Blocked,
+            Verdict::WafBlocked,
+            84,
+            Some(403),
+            "HTTP 403".to_string(),
+            Some(crate::signatures::BlockType::Waf),
+        );
+        let adjusted_waf =
+            apply_profile_confidence_adjustment("unknown-random-site.example", waf_result);
+        assert_eq!(
+            adjusted_waf.confidence, 74,
+            "WAF confidence for unknown domain should be -10"
+        );
+    }
+
+    #[test]
+    fn multi_probe_consensus_accepts_majority_verdict() {
+        use crate::scanner::types::{DomainStatus, build_scan_result};
+
+        let make = |v: Verdict, r: RoutingDecision, conf: u8| {
+            let mut res = build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                v,
+                conf,
+                Some(403),
+                "test".to_string(),
+                None,
+            );
+            res.routing_decision = r;
+            res
+        };
+
+        // 2 of 3 agree on GeoBlocked/ProxyRequired → consensus
+        let attempts = vec![
+            make(Verdict::GeoBlocked, RoutingDecision::ProxyRequired, 78),
+            make(Verdict::GeoBlocked, RoutingDecision::ProxyRequired, 75),
+            make(Verdict::WafBlocked, RoutingDecision::ManualReview, 65),
+        ];
+        let result = stabilize_scan_attempts(attempts);
+        assert_eq!(result.verdict, Verdict::GeoBlocked);
+        assert_eq!(result.routing_decision, RoutingDecision::ProxyRequired);
+        assert!(
+            result.reason.contains("consensus"),
+            "should be consensus, got: {}",
+            result.reason
+        );
+        assert_eq!(result.confidence, 81, "78 + 3 consensus boost");
+    }
+
+    #[test]
+    fn multi_probe_no_majority_falls_to_manual_review() {
+        use crate::scanner::types::{DomainStatus, build_scan_result};
+
+        let make = |v: Verdict, conf: u8| {
+            build_scan_result(
+                "example.com".to_string(),
+                DomainStatus::Blocked,
+                v,
+                conf,
+                Some(403),
+                "test".to_string(),
+                None,
+            )
+        };
+
+        // All three different — no majority
+        let attempts = vec![
+            make(Verdict::GeoBlocked, 78),
+            make(Verdict::WafBlocked, 72),
+            make(Verdict::Captcha, 68),
+        ];
+        let result = stabilize_scan_attempts(attempts);
+        assert_eq!(result.routing_decision, RoutingDecision::ManualReview);
+        assert!(
+            result.reason.contains("unstable"),
+            "should be unstable, got: {}",
+            result.reason
+        );
+    }
+}
